@@ -68,7 +68,9 @@ module top (
     wire instr_mem_access;
     
     // Use memory map macros for clean address decoding
-    assign data_mem_access = `IS_DATA_MEM(data_mem_addr);
+    assign data_mem_access = `IS_DATA_MEM(data_mem_addr) || 
+                            (`IS_DATA_MEM(cpu_mem_read_addr) && cpu_mem_read_en) ||
+                            (`IS_DATA_MEM(cpu_mem_write_addr) && cpu_mem_write_en);
     assign timer_access = `IS_TIMER_MEM(data_mem_addr);
     assign uart_access = `IS_UART_MEM(data_mem_addr);
     assign instr_mem_access = `IS_INSTR_MEM(data_mem_addr);
@@ -148,7 +150,15 @@ module top (
         .mem_data(instr_to_burst_data)
     );
 
+    reg [31:0] mem_data_reg;
 
+    always @(posedge clk) begin
+        if (rst) begin
+            mem_data_reg <= 32'b0;
+        end else if (cpu_mem_read_en) begin
+            mem_data_reg <= mem_read_data;  // Capture the data when reading
+        end
+    end
 
     // Instantiate the RISC-V CPU core
     riscv_cpu cpu_inst (
@@ -158,7 +168,7 @@ module top (
         .software_interrupt(software_interrupt),
         .external_interrupt(external_interrupt),
         .module_instr_in(instr_to_cpu),
-        .module_read_data_in(mem_read_data),
+        .module_read_data_in(cpu_mem_read_en ? mem_read_data : mem_data_reg),
         .module_pc_out(cpu_pc_out),
         .module_wr_data_out(cpu_mem_write_data),
         .module_mem_wr_en(cpu_mem_write_en),

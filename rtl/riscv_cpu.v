@@ -152,6 +152,10 @@ module riscv_cpu (
     wire ecall_exception;
     wire ebreak_exception;
 
+    wire [31:0] mem_load_result;  // Actual loaded data from memory
+    wire mem_is_load;             // Is current MEM instruction a load?
+    
+
     // Signal assignments
     assign pc_inst0_j_signal = ex_inst0_jump_signal_out;
     assign pc_inst0_jump = ex_inst0_jump_addr_out;
@@ -171,6 +175,14 @@ module riscv_cpu (
     assign rf_inst0_rd_in = wb_inst0_rd_addr_out;
     assign rf_inst0_wr_en = wb_inst0_wr_en_out;
     assign rf_inst0_rd_value_in = wb_inst0_rd_value_out;
+
+    assign mem_is_load = (ex_mem_inst0_instr_id_out == 6'h16) ||  // LW
+                         (ex_mem_inst0_instr_id_out == 6'h14) ||  // LB
+                         (ex_mem_inst0_instr_id_out == 6'h15) ||  // LH
+                         (ex_mem_inst0_instr_id_out == 6'h17) ||  // LBU
+                         (ex_mem_inst0_instr_id_out == 6'h18);    // LHU
+
+    assign mem_load_result = mem_is_load ? module_read_data_in : ex_mem_inst0_exec_output_out;
 
     // Instantiate PC
     pc pc_inst0 (
@@ -335,7 +347,7 @@ module riscv_cpu (
         .pc_input(id_ex_inst0_pc_out),
         .forward_a(forward_a),
         .forward_b(forward_b),
-        .ex_mem_result(ex_mem_inst0_exec_output_out),
+        .ex_mem_result(mem_load_result),
         .mem_wb_result(wb_inst0_rd_value_out),
         .csr_read_data(csr_read_data),
         .csr_valid(csr_valid),
