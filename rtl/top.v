@@ -14,7 +14,11 @@ module top (
     
     // Optional debug outputs
     output wire [31:0] pc_debug,
-    output wire [31:0] instr_debug
+    output wire [31:0] instr_debug,
+
+    output wire cache_hit_debug,
+    output wire cache_miss_debug,
+    output wire cache_stall_debug
 );
 
     // Wires to connect CPU and memories
@@ -30,7 +34,24 @@ module top (
     wire [3:0] cpu_write_byte_enable;  // Write byte enables
     wire [2:0] cpu_load_type;          // Load type
     wire [31:0] instr_read_data;
+
+    // NEW: I-Cache related wires
+    wire cache_stall;               // Stall signal from I-cache to CPU
+    wire cache_hit, cache_miss;     // Cache statistics
     
+    // I-Cache to Burst Controller interface
+    wire icache_mem_req;
+    wire [31:0] icache_mem_addr;
+    wire [3:0] icache_mem_burst_len;  // For 8-word blocks: 0-7
+    wire [31:0] icache_mem_data;
+    wire icache_mem_ready;
+    wire icache_mem_valid;
+    wire icache_mem_last;
+    
+    // Burst Controller to Instruction Memory interface
+    wire [31:0] burst_to_instr_addr;
+    wire [31:0] instr_to_burst_data;
+     
     // Timer module wires
     wire [31:0] timer_read_data;
     wire timer_valid;
@@ -64,9 +85,70 @@ module top (
     // Debug outputs
     assign pc_debug = cpu_pc_out;
     assign instr_debug = instr_to_cpu;
+    assign cache_hit_debug = cache_hit;
+    assign cache_miss_debug = cache_miss;
+    assign cache_stall_debug = cache_stall;
     
     // Data memory read data (separate wire for clarity)
     wire [31:0] data_mem_read_data;
+
+        // Instantiate I-Cache
+    icache_nway_multiword #(
+        .ADDR_WIDTH(32),
+        .DATA_WIDTH(32),
+        .CACHE_SIZE(1024),      // 1KB cache
+        .ASSOCIATIVITY(4),      // 4-way set associative
+        .BLOCK_SIZE(8)          // 8 words per block
+    ) icache_inst (
+        .clk(clk),
+        .rst(rst),
+        
+        // CPU Interface
+        .cpu_req(1'b1),                 // CPU always requests instructions
+        .cpu_addr(cpu_pc_out),          // PC from CPU
+        .cpu_data(instr_to_cpu),        // Instruction to CPU
+        .cpu_valid(),                   // Not used - instruction always available when not stalled
+        .cpu_stall(cache_stall),        // Stall signal to CPU
+        
+        // Memory Interface (to Burst Controller)
+        .mem_req(icache_mem_req),
+        .mem_addr(icache_mem_addr),
+        .mem_burst_len(icache_mem_burst_len),
+        .mem_data(icache_mem_data),
+        .mem_ready(icache_mem_ready),
+        .mem_valid(icache_mem_valid),
+        .mem_last(icache_mem_last),
+        
+        // Cache Statistics
+        .cache_hit(cache_hit),
+        .cache_miss(cache_miss),
+        .cache_evict()                  // Not used
+    );
+    
+    // Instantiate Burst Controller
+    burst_controller #(
+        .ADDR_WIDTH(32),
+        .DATA_WIDTH(32),
+        .BLOCK_SIZE(8)                  // Match cache block size
+    ) burst_ctrl_inst (
+        .clk(clk),
+        .rst(rst),
+        
+        // Interface to I-Cache
+        .cache_mem_req(icache_mem_req),
+        .cache_mem_addr(icache_mem_addr),
+        .cache_mem_burst_len(icache_mem_burst_len),
+        .cache_mem_data(icache_mem_data),
+        .cache_mem_ready(icache_mem_ready),
+        .cache_mem_valid(icache_mem_valid),
+        .cache_mem_last(icache_mem_last),
+        
+        // Interface to Instruction Memory
+        .mem_addr(burst_to_instr_addr),
+        .mem_data(instr_to_burst_data)
+    );
+
+
 
     // Instantiate the RISC-V CPU core
     riscv_cpu cpu_inst (
@@ -84,19 +166,23 @@ module top (
         .module_read_addr(cpu_mem_read_addr),
         .module_write_addr(cpu_mem_write_addr),
         .module_write_byte_enable(cpu_write_byte_enable),
-        .module_load_type(cpu_load_type)
+        .module_load_type(cpu_load_type),
+        .cache_stall(cache_stall)
     );
 
-    // Instantiate instruction memory
+    // Instantiate instruction memory (dual-port for cache and direct access)
     instr_mem #(
         .DATA_WIDTH(32),
         .ADDR_WIDTH(32),
         .MEM_SIZE(131072)  // 512KB / 4 bytes = 128K words
     ) instr_mem_inst (
-        .instr_addr(cpu_pc_out),
+        // Port 1: For cache/burst controller access
+        .instr_addr(burst_to_instr_addr),
+        .instr(instr_to_burst_data),
+        
+        // Port 2: For direct data memory access (when accessing instruction memory as data)
         .instr_addr_p2(data_mem_addr),
         .load_type(cpu_load_type),
-        .instr(instr_to_cpu),
         .instr_p2(instr_read_data)
     );
 

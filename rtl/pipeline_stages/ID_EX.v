@@ -13,7 +13,12 @@ module ID_EX(
     input wire [31:0] pc_in,
     input wire [31:0] rs1_value_in,
     input wire [31:0] rs2_value_in,
-    input wire stall,               // Added stall input
+    
+    // Stall inputs - kept separate for clarity
+    input wire cache_stall,              // NEW: Cache stall (global freeze)
+    input wire load_use_stall,           // EXISTING: Load-use hazard (bubble insertion)
+    input wire pipeline_flush,           // EXISTING: Branch/jump flush
+    
     output reg rs1_valid_out,
     output reg rs2_valid_out,
     output reg rd_valid_out,
@@ -41,8 +46,22 @@ module ID_EX(
             pc_out <= 32'b0;
             rs1_value_out <= 32'b0;
             rs2_value_out <= 32'b0;
-        end else if (stall) begin
-            // Insert a bubble (NOP) when stalling
+        end else if (cache_stall) begin
+            // CACHE STALL: Global freeze - hold all current values
+            rs1_valid_out <= rs1_valid_out;
+            rs2_valid_out <= rs2_valid_out;
+            rd_valid_out <= rd_valid_out;
+            imm_out <= imm_out;
+            rs1_addr_out <= rs1_addr_out;
+            rs2_addr_out <= rs2_addr_out;
+            rd_addr_out <= rd_addr_out;
+            opcode_out <= opcode_out;
+            instr_id_out <= instr_id_out;
+            pc_out <= pc_out;
+            rs1_value_out <= rs1_value_out;
+            rs2_value_out <= rs2_value_out;
+        end else if (pipeline_flush || load_use_stall) begin
+            // LOAD-USE STALL or PIPELINE FLUSH: Insert a bubble (NOP)
             rs1_valid_out <= 1'b0;
             rs2_valid_out <= 1'b0;
             rd_valid_out <= 1'b0;
@@ -56,6 +75,7 @@ module ID_EX(
             rs1_value_out <= 32'b0;
             rs2_value_out <= 32'b0;
         end else begin
+            // NORMAL: Transfer inputs to outputs
             rs1_valid_out <= rs1_valid_in;
             rs2_valid_out <= rs2_valid_in;
             rd_valid_out <= rd_valid_in;

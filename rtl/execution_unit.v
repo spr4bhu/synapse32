@@ -250,5 +250,9 @@ always @(*) begin
         endcase
     end
 end
-
+always @(*) begin
+    $display("FORWARD DEBUG: PC=0x%08x forward_a=%0d forward_b=%0d", pc_input, forward_a, forward_b);
+    $display("  ex_mem_result=0x%08x mem_wb_result=0x%08x", ex_mem_result, mem_wb_result);
+    $display("  rs1_value_selected=0x%08x rs2_value_selected=0x%08x", rs1_value, rs2_value);
+end
 endmodule

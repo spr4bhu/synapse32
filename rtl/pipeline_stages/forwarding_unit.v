@@ -43,7 +43,6 @@ module forwarding_unit (
         // Forward to RS1 if needed
         if (rs1_valid_ex) begin
             // Check if forwarding from MEM stage is needed
-            // Don't forward for a load in MEM stage - wait for it to reach WB
             if (rd_valid_mem && (rd_addr_mem != 5'b0) && (rd_addr_mem == rs1_addr_ex) && !is_mem_load) begin
                 forward_a = FORWARD_FROM_MEM;
             end
@@ -56,7 +55,6 @@ module forwarding_unit (
         // Forward to RS2 if needed
         if (rs2_valid_ex) begin
             // Check if forwarding from MEM stage is needed
-            // Don't forward for a load in MEM stage - wait for it to reach WB
             if (rd_valid_mem && (rd_addr_mem != 5'b0) && (rd_addr_mem == rs2_addr_ex) && !is_mem_load) begin
                 forward_b = FORWARD_FROM_MEM;
             end

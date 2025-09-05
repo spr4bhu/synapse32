@@ -16,47 +16,37 @@ module riscv_cpu (
     // Interrupt inputs
     input wire timer_interrupt,
     input wire software_interrupt,
-    input wire external_interrupt
+    input wire external_interrupt,
+
+    // Cache stall input
+    input wire cache_stall
 );
 
-    // Instantiate PC
+    // Stall and control signals
+    wire load_use_stall;           // From load-use hazard detector
+    wire pc_stall;                 // Combined stall for PC
+    wire pipeline_bubble_needed;   // For load-use hazard bubbles
+    wire execution_flush;          // From execution unit (branches/jumps)
+    wire pipeline_flush;           // Combined flush signal
+    
+    // PC Stall Logic: Either cache stall OR load-use stall stops PC
+    assign pc_stall = cache_stall || load_use_stall;
+    
+    // Pipeline Flush Logic: Only for branches/jumps (not affected by cache stalls)
+    assign pipeline_flush = execution_flush;
+    
+    // Bubble Logic: Only for load-use hazards (when not in cache stall)
+    assign pipeline_bubble_needed = load_use_stall && !cache_stall;
+
+    // Forward declarations for all pipeline signals
     wire [31:0] pc_inst0_out;
     wire pc_inst0_j_signal;
     wire [31:0] pc_inst0_jump;
-    wire stall_pipeline; // For load-use hazards
-    // Branch handling: use EX stage jump signal/address
-    assign pc_inst0_j_signal = ex_inst0_jump_signal_out;
-    assign pc_inst0_jump = ex_inst0_jump_addr_out;
-    pc pc_inst0 (
-        .clk(clk),
-        .rst(rst),
-        .j_signal(pc_inst0_j_signal),
-        .jump(pc_inst0_jump),
-        .stall(stall_pipeline), // Stall on load-use hazard
-        .out(pc_inst0_out)
-    );
-
-    // Send out the PC value
-    assign module_pc_out = pc_inst0_out;
-
-
-    // Instantiate IF_ID pipeline register
     wire [31:0] if_id_pc_out;
     wire [31:0] if_id_instr_out;
     wire branch_flush;
-    assign branch_flush = ex_inst0_jump_signal_out; // Flush IF/ID if branch taken
-    // If branch taken, flush IF/ID by setting instruction to 0 (NOP)
-    IF_ID if_id_inst0 (
-        .clk(clk),
-        .rst(rst),
-        .pc_in(pc_inst0_out),
-        .instruction_in(branch_flush ? 32'h13 : module_instr_in),
-        .stall(stall_pipeline), // Stall on load-use hazard
-        .pc_out(if_id_pc_out),
-        .instruction_out(if_id_instr_out)
-    );
-
-    // Instantiate Decoder
+    
+    // Decoder signals
     wire [4:0] decoder_inst0_rs1_out;
     wire [4:0] decoder_inst0_rs2_out;
     wire [4:0] decoder_inst0_rd_out;
@@ -66,7 +56,144 @@ module riscv_cpu (
     wire decoder_inst0_rd_valid_out;
     wire [6:0] decoder_inst0_opcode_out;
     wire [5:0] decoder_inst0_instr_id_out;
+    
+    // Register file signals
+    wire [31:0] rf_inst0_rs1_value_out;
+    wire [31:0] rf_inst0_rs2_value_out;
+    wire [4:0] rf_inst0_rd_in;
+    wire rf_inst0_wr_en;
+    wire [31:0] rf_inst0_rd_value_in;
+    
+    // ID_EX pipeline signals
+    wire id_ex_inst0_rs1_valid_out;
+    wire id_ex_inst0_rs2_valid_out;
+    wire id_ex_inst0_rd_valid_out;
+    wire [31:0] id_ex_inst0_imm_out;
+    wire [4:0] id_ex_inst0_rs1_addr_out;
+    wire [4:0] id_ex_inst0_rs2_addr_out;
+    wire [4:0] id_ex_inst0_rd_addr_out;
+    wire [6:0] id_ex_inst0_opcode_out;
+    wire [5:0] id_ex_inst0_instr_id_out;
+    wire [31:0] id_ex_inst0_pc_out;
+    wire [31:0] id_ex_inst0_rs1_value_out;
+    wire [31:0] id_ex_inst0_rs2_value_out;
+    
+    // Execution unit signals
+    wire [31:0] ex_inst0_exec_output_out;
+    wire ex_inst0_jump_signal_out;
+    wire [31:0] ex_inst0_jump_addr_out;
+    wire [31:0] ex_inst0_mem_addr_out;
+    wire [31:0] ex_inst0_rs1_value_out;
+    wire [31:0] ex_inst0_rs2_value_out;
+    
+    // Forwarding signals
+    wire [1:0] forward_a;
+    wire [1:0] forward_b;
+    
+    // EX_MEM pipeline signals
+    wire [4:0] ex_mem_inst0_rs1_addr_out;
+    wire [4:0] ex_mem_inst0_rs2_addr_out;
+    wire [4:0] ex_mem_inst0_rd_addr_out;
+    wire [31:0] ex_mem_inst0_rs1_value_out;
+    wire [31:0] ex_mem_inst0_rs2_value_out;
+    wire [31:0] ex_mem_inst0_pc_out;
+    wire [31:0] ex_mem_inst0_mem_addr_out;
+    wire [31:0] ex_mem_inst0_exec_output_out;
+    wire ex_mem_inst0_jump_signal_out;
+    wire [31:0] ex_mem_inst0_jump_addr_out;
+    wire [5:0] ex_mem_inst0_instr_id_out;
+    wire ex_mem_inst0_rd_valid_out;
+    
+    // Memory unit signals
+    wire mem_unit_inst0_wr_enable_out;
+    wire mem_unit_inst0_read_enable_out;
+    wire [31:0] mem_unit_inst0_wr_data_out;
+    wire [31:0] mem_unit_inst0_read_addr_out;
+    wire [31:0] mem_unit_inst0_wr_addr_out;
+    wire [3:0] mem_unit_inst0_write_byte_enable_out;
+    wire [2:0] mem_unit_inst0_load_type_out;
+    
+    // MEM_WB pipeline signals
+    wire [4:0] mem_wb_inst0_rs1_addr_out;
+    wire [4:0] mem_wb_inst0_rs2_addr_out;
+    wire [4:0] mem_wb_inst0_rd_addr_out;
+    wire [31:0] mem_wb_inst0_rs1_value_out;
+    wire [31:0] mem_wb_inst0_rs2_value_out;
+    wire [31:0] mem_wb_inst0_pc_out;
+    wire [31:0] mem_wb_inst0_mem_addr_out;
+    wire [31:0] mem_wb_inst0_exec_output_out;
+    wire mem_wb_inst0_jump_signal_out;
+    wire [31:0] mem_wb_inst0_jump_addr_out;
+    wire [5:0] mem_wb_inst0_instr_id_out;
+    wire mem_wb_inst0_rd_valid_out;
+    wire [31:0] mem_wb_inst0_mem_data_out;
+    
+    // Writeback signals
+    wire wb_inst0_wr_en_out;
+    wire [4:0] wb_inst0_rd_addr_out;
+    wire [31:0] wb_inst0_rd_value_out;
+    
+    // Store-load forwarding signals
+    wire store_load_hazard;
+    wire [31:0] forwarded_store_data;
+    
+    // CSR and interrupt signals
+    wire [11:0] csr_addr;
+    wire [31:0] csr_read_data;
+    wire [31:0] csr_write_data;
+    wire csr_write_enable;
+    wire csr_read_enable;
+    wire csr_valid;
+    wire interrupt_pending;
+    wire [31:0] interrupt_cause;
+    wire [31:0] interrupt_pc;
+    wire interrupt_taken;
+    wire mret_instruction;
+    wire ecall_exception;
+    wire ebreak_exception;
 
+    // Signal assignments
+    assign pc_inst0_j_signal = ex_inst0_jump_signal_out;
+    assign pc_inst0_jump = ex_inst0_jump_addr_out;
+    assign branch_flush = ex_inst0_jump_signal_out;
+    assign module_pc_out = pc_inst0_out;
+    
+    // Memory interface assignments
+    assign module_mem_wr_en = mem_unit_inst0_wr_enable_out;
+    assign module_mem_rd_en = mem_unit_inst0_read_enable_out;
+    assign module_write_addr = mem_unit_inst0_wr_addr_out;
+    assign module_read_addr = mem_unit_inst0_read_addr_out;
+    assign module_wr_data_out = mem_unit_inst0_wr_data_out;
+    assign module_write_byte_enable = mem_unit_inst0_write_byte_enable_out;
+    assign module_load_type = mem_unit_inst0_load_type_out;
+    
+    // Register file assignments
+    assign rf_inst0_rd_in = wb_inst0_rd_addr_out;
+    assign rf_inst0_wr_en = wb_inst0_wr_en_out;
+    assign rf_inst0_rd_value_in = wb_inst0_rd_value_out;
+
+    // Instantiate PC
+    pc pc_inst0 (
+        .clk(clk),
+        .rst(rst),
+        .j_signal(pc_inst0_j_signal),
+        .jump(pc_inst0_jump),
+        .stall(pc_stall),
+        .out(pc_inst0_out)
+    );
+
+    // Instantiate IF_ID pipeline register
+    IF_ID if_id_inst0 (
+        .clk(clk),
+        .rst(rst),
+        .pc_in(pc_inst0_out),
+        .instruction_in(branch_flush ? 32'h13 : module_instr_in),
+        .stall(pc_stall),
+        .pc_out(if_id_pc_out),
+        .instruction_out(if_id_instr_out)
+    );
+
+    // Instantiate Decoder
     decoder decoder_inst0 (
         .instr(if_id_instr_out),
         .rs2(decoder_inst0_rs2_out),
@@ -89,18 +216,10 @@ module riscv_cpu (
         .instr_id_ex(id_ex_inst0_instr_id_out),
         .rd_ex(id_ex_inst0_rd_addr_out),
         .rd_valid_ex(id_ex_inst0_rd_valid_out),
-        .stall_pipeline(stall_pipeline)
+        .stall_pipeline(load_use_stall)
     );
 
     // Instantiate Register File
-    wire [31:0] rf_inst0_rs1_value_out;
-    wire [31:0] rf_inst0_rs2_value_out;
-    // RD control signals will be later handled by WB stage
-    wire [4:0] rf_inst0_rd_in;
-    wire rf_inst0_wr_en;
-    wire [31:0] rf_inst0_rd_value_in;
-
-
     registerfile rf_inst0 (
         .clk(clk),
         .rs1(decoder_inst0_rs1_out),
@@ -115,26 +234,6 @@ module riscv_cpu (
     );
 
     // Instantiate ID_EX pipeline register
-    wire id_ex_inst0_rs1_valid_out;
-    wire id_ex_inst0_rs2_valid_out;
-    wire id_ex_inst0_rd_valid_out;
-    wire [31:0] id_ex_inst0_imm_out;
-    wire [4:0] id_ex_inst0_rs1_addr_out;
-    wire [4:0] id_ex_inst0_rs2_addr_out;
-    wire [4:0] id_ex_inst0_rd_addr_out;
-    wire [6:0] id_ex_inst0_opcode_out;
-    wire [5:0] id_ex_inst0_instr_id_out;
-    wire [31:0] id_ex_inst0_pc_out;
-    wire [31:0] id_ex_inst0_rs1_value_out;
-    wire [31:0] id_ex_inst0_rs2_value_out;
-
-    // Pipeline flush signals
-    wire execution_flush;
-    wire pipeline_flush;
-    
-    // Combine branch flush and execution unit flush
-    assign pipeline_flush = branch_flush || execution_flush;
-
     ID_EX id_ex_inst0 (
         .clk(clk),
         .rst(rst),
@@ -150,7 +249,9 @@ module riscv_cpu (
         .pc_in(if_id_pc_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
-        .stall(pipeline_flush || stall_pipeline), // Use combined flush
+        .cache_stall(cache_stall),
+        .load_use_stall(pipeline_bubble_needed),
+        .pipeline_flush(pipeline_flush),
         .rs1_valid_out(id_ex_inst0_rs1_valid_out),
         .rs2_valid_out(id_ex_inst0_rs2_valid_out),
         .rd_valid_out(id_ex_inst0_rd_valid_out),
@@ -165,18 +266,6 @@ module riscv_cpu (
         .rs2_value_out(id_ex_inst0_rs2_value_out)
     );
 
-    // Instantiate Execution Unit
-    wire [31:0] ex_inst0_exec_output_out;
-    wire ex_inst0_jump_signal_out;
-    wire [31:0] ex_inst0_jump_addr_out;
-    wire [31:0] ex_inst0_mem_addr_out;
-    wire [31:0] ex_inst0_rs1_value_out;
-    wire [31:0] ex_inst0_rs2_value_out;
-    
-    // Forwarding unit signals
-    wire [1:0] forward_a;
-    wire [1:0] forward_b;
-    
     // Instantiate forwarding unit
     forwarding_unit forwarding_unit_inst0 (
         .rs1_addr_ex(id_ex_inst0_rs1_addr_out),
@@ -192,23 +281,6 @@ module riscv_cpu (
         .forward_a(forward_a),
         .forward_b(forward_b)
     );
-
-    // CSR file signals
-    wire [11:0] csr_addr;
-    wire [31:0] csr_read_data;
-    wire [31:0] csr_write_data;
-    wire csr_write_enable;
-    wire csr_read_enable;
-    wire csr_valid;
-
-    // Interrupt controller signals
-    wire interrupt_pending;
-    wire [31:0] interrupt_cause;
-    wire [31:0] interrupt_pc;
-    wire interrupt_taken;
-    wire mret_instruction;
-    wire ecall_exception;
-    wire ebreak_exception;
 
     // Instantiate interrupt controller
     interrupt_controller int_ctrl_inst (
@@ -227,7 +299,7 @@ module riscv_cpu (
         .interrupt_pc(interrupt_pc)
     );
 
-    // Instantiate CSR file at CPU level
+    // Instantiate CSR file
     csr_file csr_file_inst (
         .clk(clk),
         .rst(rst),
@@ -249,6 +321,7 @@ module riscv_cpu (
         .external_interrupt(external_interrupt)
     );
 
+    // Instantiate execution unit
     execution_unit ex_unit_inst0 (
         .rs1(id_ex_inst0_rs1_value_out),
         .rs2(id_ex_inst0_rs2_value_out),
@@ -264,15 +337,12 @@ module riscv_cpu (
         .forward_b(forward_b),
         .ex_mem_result(ex_mem_inst0_exec_output_out),
         .mem_wb_result(wb_inst0_rd_value_out),
-        
-        // CSR interface connections
         .csr_read_data(csr_read_data),
         .csr_valid(csr_valid),
         .csr_addr(csr_addr),
         .csr_read_enable(csr_read_enable),
         .csr_write_data(csr_write_data),
         .csr_write_enable(csr_write_enable),
-        
         .exec_output(ex_inst0_exec_output_out),
         .jump_signal(ex_inst0_jump_signal_out),
         .jump_addr(ex_inst0_jump_addr_out),
@@ -280,8 +350,6 @@ module riscv_cpu (
         .rs1_value_out(ex_inst0_rs1_value_out),
         .rs2_value_out(ex_inst0_rs2_value_out),
         .flush_pipeline(execution_flush),
-
-        // Interrupt connections
         .interrupt_pending(interrupt_pending),
         .interrupt_cause(interrupt_cause),
         .mtvec(csr_file_inst.mtvec),
@@ -292,25 +360,11 @@ module riscv_cpu (
         .ebreak_exception(ebreak_exception)
     );
 
-    // Memory Stage
-
     // Instantiate EX_MEM pipeline register
-    wire [4:0] ex_mem_inst0_rs1_addr_out;
-    wire [4:0] ex_mem_inst0_rs2_addr_out;
-    wire [4:0] ex_mem_inst0_rd_addr_out;
-    wire [31:0] ex_mem_inst0_rs1_value_out;
-    wire [31:0] ex_mem_inst0_rs2_value_out;
-    wire [31:0] ex_mem_inst0_pc_out;
-    wire [31:0] ex_mem_inst0_mem_addr_out;
-    wire [31:0] ex_mem_inst0_exec_output_out;
-    wire ex_mem_inst0_jump_signal_out;
-    wire [31:0] ex_mem_inst0_jump_addr_out;
-    wire [5:0] ex_mem_inst0_instr_id_out;
-    wire ex_mem_inst0_rd_valid_out;
-
     EX_MEM ex_mem_inst0 (
         .clk(clk),
         .rst(rst),
+        .cache_stall(cache_stall),
         .rs1_addr_in(id_ex_inst0_rs1_addr_out),
         .rs2_addr_in(id_ex_inst0_rs2_addr_out),
         .rd_addr_in(id_ex_inst0_rd_addr_out),
@@ -338,22 +392,6 @@ module riscv_cpu (
     );
 
     // Instantiate Memory Unit
-    wire mem_unit_inst0_wr_enable_out;
-    wire mem_unit_inst0_read_enable_out;
-    wire [31:0] mem_unit_inst0_wr_data_out;
-    wire [31:0] mem_unit_inst0_read_addr_out;
-    wire [31:0] mem_unit_inst0_wr_addr_out;
-    wire [3:0] mem_unit_inst0_write_byte_enable_out;  // Write byte enables
-    wire [2:0] mem_unit_inst0_load_type_out;          // Load type
-
-    assign module_mem_wr_en = mem_unit_inst0_wr_enable_out;
-    assign module_mem_rd_en = mem_unit_inst0_read_enable_out;
-    assign module_write_addr = mem_unit_inst0_wr_addr_out;
-    assign module_read_addr = mem_unit_inst0_read_addr_out;
-    assign module_wr_data_out = mem_unit_inst0_wr_data_out;
-    assign module_write_byte_enable = mem_unit_inst0_write_byte_enable_out;
-    assign module_load_type = mem_unit_inst0_load_type_out;
-
     memory_unit mem_unit_inst0 (
         .instr_id(ex_mem_inst0_instr_id_out),
         .rs2_value(ex_mem_inst0_rs2_value_out),
@@ -367,25 +405,6 @@ module riscv_cpu (
         .load_type(mem_unit_inst0_load_type_out)
     );
 
-    // Instantiate MEM_WB pipeline register
-    wire [4:0] mem_wb_inst0_rs1_addr_out;
-    wire [4:0] mem_wb_inst0_rs2_addr_out;
-    wire [4:0] mem_wb_inst0_rd_addr_out;
-    wire [31:0] mem_wb_inst0_rs1_value_out;
-    wire [31:0] mem_wb_inst0_rs2_value_out;
-    wire [31:0] mem_wb_inst0_pc_out;
-    wire [31:0] mem_wb_inst0_mem_addr_out;
-    wire [31:0] mem_wb_inst0_exec_output_out;
-    wire mem_wb_inst0_jump_signal_out;
-    wire [31:0] mem_wb_inst0_jump_addr_out;
-    wire [5:0] mem_wb_inst0_instr_id_out;
-    wire mem_wb_inst0_rd_valid_out;
-    wire [31:0] mem_wb_inst0_mem_data_out;
-
-    // Add wires for store-load forwarding
-    wire store_load_hazard;
-    wire [31:0] forwarded_store_data;
-
     // Instantiate store-load hazard detector
     store_load_detector store_load_detector_inst0 (
         .load_instr_id(ex_mem_inst0_instr_id_out),
@@ -394,12 +413,14 @@ module riscv_cpu (
         .prev_store_addr(mem_wb_inst0_mem_addr_out),
         .store_load_hazard(store_load_hazard),
         .forwarded_data(forwarded_store_data),
-        .rs2_value(ex_mem_inst0_rs2_value_out)  // Forwarded store data
+        .rs2_value(ex_mem_inst0_rs2_value_out)
     );
 
+    // Instantiate MEM_WB pipeline register
     MEM_WB mem_wb_inst0 (
         .clk(clk),
         .rst(rst),
+        .cache_stall(cache_stall),
         .rs1_addr_in(ex_mem_inst0_rs1_addr_out),
         .rs2_addr_in(ex_mem_inst0_rs2_addr_out),
         .rd_addr_in(ex_mem_inst0_rd_addr_out),
@@ -412,13 +433,9 @@ module riscv_cpu (
         .jump_addr_in(ex_mem_inst0_jump_addr_out),
         .instr_id_in(ex_mem_inst0_instr_id_out),
         .rd_valid_in(ex_mem_inst0_rd_valid_out),
-        .mem_data_in(module_read_data_in),  // Connect memory data
-
-        // Store-load forwarding connections
+        .mem_data_in(module_read_data_in),
         .store_load_hazard(store_load_hazard),
         .store_data(forwarded_store_data),
-
-        // Outputs
         .rs1_addr_out(mem_wb_inst0_rs1_addr_out),
         .rs2_addr_out(mem_wb_inst0_rs2_addr_out),
         .rd_addr_out(mem_wb_inst0_rd_addr_out),
@@ -431,29 +448,19 @@ module riscv_cpu (
         .jump_addr_out(mem_wb_inst0_jump_addr_out),
         .instr_id_out(mem_wb_inst0_instr_id_out),
         .rd_valid_out(mem_wb_inst0_rd_valid_out),
-        .mem_data_out(mem_wb_inst0_mem_data_out)  // Output to WB stage
+        .mem_data_out(mem_wb_inst0_mem_data_out)
     );
 
     // Instantiate Write Back Stage
-    wire wb_inst0_wr_en_out;
-    wire [4:0] wb_inst0_rd_addr_out;
-    wire [31:0] wb_inst0_rd_value_out;
-
-    assign rf_inst0_rd_in = wb_inst0_rd_addr_out;
-    assign rf_inst0_wr_en = wb_inst0_wr_en_out;
-    assign rf_inst0_rd_value_in = wb_inst0_rd_value_out;
-
     writeback wb_inst0 (
         .rd_valid_in(mem_wb_inst0_rd_valid_out),
         .rd_addr_in(mem_wb_inst0_rd_addr_out),
         .rd_value_in(mem_wb_inst0_exec_output_out),
-        .mem_data_in(mem_wb_inst0_mem_data_out),  // Use pipelined data
+        .mem_data_in(mem_wb_inst0_mem_data_out),
         .instr_id_in(mem_wb_inst0_instr_id_out),
         .rd_addr_out(wb_inst0_rd_addr_out),
         .rd_value_out(wb_inst0_rd_value_out),
         .wr_en_out(wb_inst0_wr_en_out)
     );
-
-    // Write Back Stage
 
 endmodule
