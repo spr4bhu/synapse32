@@ -153,8 +153,8 @@ module riscv_cpu (
     wire ecall_exception;
     wire ebreak_exception;
 
-    wire [31:0] mem_load_result;  // Actual loaded data from memory
-    wire mem_is_load;             // Is current MEM instruction a load?
+    // wire [31:0] mem_load_result;  // Actual loaded data from memory
+    // wire mem_is_load;             // Is current MEM instruction a load?
     
 
     // Signal assignments
@@ -177,13 +177,13 @@ module riscv_cpu (
     assign rf_inst0_wr_en = wb_inst0_wr_en_out;
     assign rf_inst0_rd_value_in = wb_inst0_rd_value_out;
 
-    assign mem_is_load = (ex_mem_inst0_instr_id_out == INSTR_LW) ||  // LW
-                         (ex_mem_inst0_instr_id_out == 6'h14) ||  // LB
-                         (ex_mem_inst0_instr_id_out == 6'h15) ||  // LH
-                         (ex_mem_inst0_instr_id_out == 6'h17) ||  // LBU
-                         (ex_mem_inst0_instr_id_out == 6'h18);    // LHU
+    // assign mem_is_load = (ex_mem_inst0_instr_id_out == INSTR_LW) ||  // LW
+    //                      (ex_mem_inst0_instr_id_out == 6'h14) ||  // LB
+    //                      (ex_mem_inst0_instr_id_out == 6'h15) ||  // LH
+    //                      (ex_mem_inst0_instr_id_out == 6'h17) ||  // LBU
+    //                      (ex_mem_inst0_instr_id_out == 6'h18);    // LHU
 
-    assign mem_load_result = mem_is_load ? module_read_data_in : ex_mem_inst0_exec_output_out;
+    // assign mem_load_result = mem_is_load ? module_read_data_in : ex_mem_inst0_exec_output_out;
 
     // Instantiate PC
     pc pc_inst0 (
@@ -348,7 +348,7 @@ module riscv_cpu (
         .pc_input(id_ex_inst0_pc_out),
         .forward_a(forward_a),
         .forward_b(forward_b),
-        .ex_mem_result(mem_load_result),
+        .ex_mem_result(ex_mem_inst0_exec_output_out),
         .mem_wb_result(wb_inst0_rd_value_out),
         .csr_read_data(csr_read_data),
         .csr_valid(csr_valid),
@@ -433,7 +433,6 @@ module riscv_cpu (
     MEM_WB mem_wb_inst0 (
         .clk(clk),
         .rst(rst),
-        .cache_stall(cache_stall),
         .rs1_addr_in(ex_mem_inst0_rs1_addr_out),
         .rs2_addr_in(ex_mem_inst0_rs2_addr_out),
         .rd_addr_in(ex_mem_inst0_rd_addr_out),
@@ -441,14 +440,18 @@ module riscv_cpu (
         .rs2_value_in(ex_mem_inst0_rs2_value_out),
         .pc_in(ex_mem_inst0_pc_out),
         .mem_addr_in(ex_mem_inst0_mem_addr_out),
-        .exec_output_in(ex_mem_inst0_exec_output_out),
+        .exec_output_in(ex_mem_inst0_exec_output_out),  // ALU result
         .jump_signal_in(ex_mem_inst0_jump_signal_out),
         .jump_addr_in(ex_mem_inst0_jump_addr_out),
         .instr_id_in(ex_mem_inst0_instr_id_out),
         .rd_valid_in(ex_mem_inst0_rd_valid_out),
-        .mem_data_in(mem_load_result),
+        // REMOVED: .mem_data_in() connection
+        
+        // Store-load forwarding (keep if used)
         .store_load_hazard(store_load_hazard),
         .store_data(forwarded_store_data),
+
+        // Outputs
         .rs1_addr_out(mem_wb_inst0_rs1_addr_out),
         .rs2_addr_out(mem_wb_inst0_rs2_addr_out),
         .rd_addr_out(mem_wb_inst0_rd_addr_out),
@@ -456,21 +459,21 @@ module riscv_cpu (
         .rs2_value_out(mem_wb_inst0_rs2_value_out),
         .pc_out(mem_wb_inst0_pc_out),
         .mem_addr_out(mem_wb_inst0_mem_addr_out),
-        .exec_output_out(mem_wb_inst0_exec_output_out),
+        .exec_output_out(mem_wb_inst0_exec_output_out),  // ALU result to WB
         .jump_signal_out(mem_wb_inst0_jump_signal_out),
         .jump_addr_out(mem_wb_inst0_jump_addr_out),
         .instr_id_out(mem_wb_inst0_instr_id_out),
-        .rd_valid_out(mem_wb_inst0_rd_valid_out),
-        .mem_data_out(mem_wb_inst0_mem_data_out)
+        .rd_valid_out(mem_wb_inst0_rd_valid_out)
+        // REMOVED: .mem_data_out() connection
     );
+
 
     // Instantiate Write Back Stage
     writeback wb_inst0 (
         .rd_valid_in(mem_wb_inst0_rd_valid_out),
         .rd_addr_in(mem_wb_inst0_rd_addr_out),
-        .rd_value_in(mem_wb_inst0_exec_output_out),
-        .mem_data_in(mem_wb_inst0_mem_data_out),      // Keep existing connection for compatibility
-        .mem_data_direct(module_read_data_in),        // NEW: Direct memory data input
+        .rd_value_in(mem_wb_inst0_exec_output_out),      // ALU result from pipeline
+        .mem_read_data(module_read_data_in),             // DIRECT memory data from top level
         .instr_id_in(mem_wb_inst0_instr_id_out),
         .rd_addr_out(wb_inst0_rd_addr_out),
         .rd_value_out(wb_inst0_rd_value_out),
