@@ -201,7 +201,7 @@ module riscv_cpu (
         .rst(rst),
         .pc_in(pc_inst0_out),
         .instruction_in(branch_flush ? 32'h13 : module_instr_in),
-        .stall(pc_stall),
+        .stall(cache_stall || load_use_stall),
         .pc_out(if_id_pc_out),
         .instruction_out(if_id_instr_out)
     );
@@ -262,9 +262,7 @@ module riscv_cpu (
         .pc_in(if_id_pc_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
-        .cache_stall(cache_stall),
-        .load_use_stall(pipeline_bubble_needed),
-        .pipeline_flush(pipeline_flush),
+        .stall(pipeline_flush || load_use_stall),  // ONLY hazards/flushes, NOT cache
         .rs1_valid_out(id_ex_inst0_rs1_valid_out),
         .rs2_valid_out(id_ex_inst0_rs2_valid_out),
         .rd_valid_out(id_ex_inst0_rd_valid_out),
@@ -377,7 +375,6 @@ module riscv_cpu (
     EX_MEM ex_mem_inst0 (
         .clk(clk),
         .rst(rst),
-        .cache_stall(cache_stall),
         .rs1_addr_in(id_ex_inst0_rs1_addr_out),
         .rs2_addr_in(id_ex_inst0_rs2_addr_out),
         .rd_addr_in(id_ex_inst0_rd_addr_out),
