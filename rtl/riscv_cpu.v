@@ -262,7 +262,9 @@ module riscv_cpu (
         .pc_in(if_id_pc_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
-        .stall(pipeline_flush || load_use_stall),  // ONLY hazards/flushes, NOT cache
+        .cache_stall(cache_stall),
+        .hazard_stall(load_use_stall),
+        .flush(pipeline_flush),
         .rs1_valid_out(id_ex_inst0_rs1_valid_out),
         .rs2_valid_out(id_ex_inst0_rs2_valid_out),
         .rd_valid_out(id_ex_inst0_rd_valid_out),
@@ -334,6 +336,7 @@ module riscv_cpu (
 
     // Instantiate execution unit
     execution_unit ex_unit_inst0 (
+        .enable(!cache_stall),  // ADD THIS LINE
         .rs1(id_ex_inst0_rs1_value_out),
         .rs2(id_ex_inst0_rs2_value_out),
         .imm(id_ex_inst0_imm_out),
@@ -375,6 +378,7 @@ module riscv_cpu (
     EX_MEM ex_mem_inst0 (
         .clk(clk),
         .rst(rst),
+        .stall(cache_stall),
         .rs1_addr_in(id_ex_inst0_rs1_addr_out),
         .rs2_addr_in(id_ex_inst0_rs2_addr_out),
         .rd_addr_in(id_ex_inst0_rd_addr_out),
@@ -430,6 +434,9 @@ module riscv_cpu (
     MEM_WB mem_wb_inst0 (
         .clk(clk),
         .rst(rst),
+        .stall(load_use_stall),
+        .mem_data_in(module_read_data_in),
+        .mem_data_out(mem_wb_inst0_mem_data_out),
         .rs1_addr_in(ex_mem_inst0_rs1_addr_out),
         .rs2_addr_in(ex_mem_inst0_rs2_addr_out),
         .rd_addr_in(ex_mem_inst0_rd_addr_out),
@@ -469,8 +476,8 @@ module riscv_cpu (
     writeback wb_inst0 (
         .rd_valid_in(mem_wb_inst0_rd_valid_out),
         .rd_addr_in(mem_wb_inst0_rd_addr_out),
-        .rd_value_in(mem_wb_inst0_exec_output_out),      // ALU result from pipeline
-        .mem_read_data(module_read_data_in),             // DIRECT memory data from top level
+        .rd_value_in(mem_wb_inst0_exec_output_out),
+        .mem_data_in(mem_wb_inst0_mem_data_out),      // From MEM_WB, not top
         .instr_id_in(mem_wb_inst0_instr_id_out),
         .rd_addr_out(wb_inst0_rd_addr_out),
         .rd_value_out(wb_inst0_rd_value_out),

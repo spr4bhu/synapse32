@@ -156,7 +156,7 @@ module top (
         if (rst) begin
             mem_data_reg <= 32'b0;
         end else if (cpu_mem_read_en) begin
-            mem_data_reg <= mem_read_data;  // Capture the data when reading
+            mem_data_reg <= mem_read_data;
         end
     end
 
@@ -196,6 +196,17 @@ module top (
         .instr_p2(instr_read_data)
     );
 
+    reg [31:0] data_mem_addr_reg;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            data_mem_addr_reg <= 32'h0;
+        end else if (cpu_mem_write_en || cpu_mem_read_en) begin
+            data_mem_addr_reg <= cpu_mem_write_en ? cpu_mem_write_addr : cpu_mem_read_addr;
+        end
+        // else hold previous address
+    end
+
     // Instantiate data memory  
     data_mem #(
         .DATA_WIDTH(32),
@@ -207,7 +218,7 @@ module top (
         .rd_en(cpu_mem_read_en && data_mem_access),
         .write_byte_enable(cpu_write_byte_enable),
         .load_type(cpu_load_type),
-        .addr(data_mem_addr - `DATA_MEM_BASE),
+        .addr(data_mem_addr_reg - `DATA_MEM_BASE),
         .wr_data(cpu_mem_write_data),
         .rd_data_out(data_mem_read_data)
     );

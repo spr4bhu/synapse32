@@ -11,14 +11,14 @@ module MEM_WB (
     input wire [31:0] rs2_value_in,
     input wire [31:0] pc_in,
     input wire [31:0] mem_addr_in,
-    input wire [31:0] exec_output_in,    // ALU result
+    input wire [31:0] mem_data_in,         // Input
+    input wire [31:0] exec_output_in,
     input wire jump_signal_in,
     input wire [31:0] jump_addr_in,
     input wire [5:0] instr_id_in,
     input wire rd_valid_in,
-    // REMOVED: mem_data_in - no longer latch memory data here
     
-    // Store-load forwarding inputs (keep if needed)
+    // Store-load forwarding
     input wire store_load_hazard,
     input wire [31:0] store_data,
     
@@ -30,12 +30,12 @@ module MEM_WB (
     output reg [31:0] rs2_value_out,
     output reg [31:0] pc_out,
     output reg [31:0] mem_addr_out,
-    output reg [31:0] exec_output_out,   // ALU result to WB
+    output reg [31:0] mem_data_out,        // Output (was input in your code)
+    output reg [31:0] exec_output_out,
     output reg jump_signal_out,
     output reg [31:0] jump_addr_out,
     output reg [5:0] instr_id_out,
     output reg rd_valid_out
-    // REMOVED: mem_data_out - WB gets memory data directly from top level
 );
 
     always @(posedge clk or posedge rst) begin
@@ -63,6 +63,7 @@ module MEM_WB (
             rs2_value_out <= rs2_value_in;
             pc_out <= pc_in;
             mem_addr_out <= mem_addr_in;
+            mem_data_out <= store_load_hazard ? store_data : mem_data_in;
             exec_output_out <= exec_output_in;  // Pass ALU result through
             jump_signal_out <= jump_signal_in;
             jump_addr_out <= jump_addr_in;
