@@ -1,4 +1,5 @@
 `default_nettype none
+`timescale 1ns/1ps
 `include "instr_defines.vh"
 
 module execution_unit(
@@ -12,7 +13,7 @@ module execution_unit(
     input wire rs1_valid,
     input wire rs2_valid,
     input wire [31:0] pc_input,
-    input wire enable,
+    input wire valid_in,               // NEW - replaces enable
     // Data forwarding inputs
     input wire [1:0] forward_a,
     input wire [1:0] forward_b,
@@ -33,12 +34,13 @@ module execution_unit(
     output reg [31:0] rs1_value_out,
     output reg [31:0] rs2_value_out,
     output reg flush_pipeline,
-    // Add interrupt/exception inputs
+    output reg valid_out,              // NEW - pass valid through
+    // Interrupt/exception inputs
     input wire interrupt_pending,
     input wire [31:0] interrupt_cause,
     input wire [31:0] mtvec,
     input wire [31:0] mepc,
-    // Add interrupt/exception outputs
+    // Interrupt/exception outputs
     output reg interrupt_taken,
     output reg mret_instruction,
     output reg ecall_exception,
@@ -75,7 +77,7 @@ csr_exec csr_exec_inst (
     .rd_value(csr_rd_value)
 );
 
-// Select forwarded values
+// Forwarding logic - always compute forwarded values
 always @(*) begin
     case (forward_a)
         NO_FORWARDING: rs1_value = rs1;
@@ -101,10 +103,14 @@ alu alu_inst(
     .ALUoutput()
 );
 
-// Main execution logic
+// Main execution logic - CRITICAL: Check valid_in before doing ANY computation
 always @(*) begin
-    if (!enable) begin
-        // Don't compute anything during cache stalls
+    // Always pass valid through
+    valid_out = valid_in;
+    
+
+    if (!valid_in) begin
+        // Invalid instruction - output zeros, don't compute anything
         exec_output = 32'b0;
         jump_signal = 1'b0;
         jump_addr = 32'b0;
@@ -115,6 +121,7 @@ always @(*) begin
         ecall_exception = 1'b0;
         ebreak_exception = 1'b0;
     end else begin
+        // Valid instruction - normal execution
         // Default values
         exec_output = 0;
         jump_signal = 0;

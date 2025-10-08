@@ -1,7 +1,10 @@
+`timescale 1ns/1ps
+`default_nettype none
+
 module EX_MEM (
     input wire clk,
     input wire rst,
-    input wire stall,  // Added stall input
+    input wire stall,
     input wire [4:0] rs1_addr_in,
     input wire [4:0] rs2_addr_in,
     input wire [4:0] rd_addr_in,
@@ -14,6 +17,7 @@ module EX_MEM (
     input wire [31:0] jump_addr_in,
     input wire [5:0] instr_id_in,
     input wire rd_valid_in,
+    input wire valid_in,               // NEW
     output reg [4:0] rs1_addr_out,
     output reg [4:0] rs2_addr_out,
     output reg [4:0] rd_addr_out,
@@ -25,7 +29,8 @@ module EX_MEM (
     output reg jump_signal_out,
     output reg [31:0] jump_addr_out,
     output reg [5:0] instr_id_out,
-    output reg rd_valid_out
+    output reg rd_valid_out,
+    output reg valid_out               // NEW
 );
 
 always @(posedge clk or posedge rst) begin
@@ -42,7 +47,8 @@ always @(posedge clk or posedge rst) begin
         jump_addr_out <= 32'b0;
         instr_id_out <= 6'b0;
         rd_valid_out <= 1'b0;
-    end else if (!stall) begin  // Only advance if not stalled
+        valid_out <= 1'b0;             // NEW
+    end else if (!stall) begin
         rs1_addr_out <= rs1_addr_in;
         rs2_addr_out <= rs2_addr_in;
         rd_addr_out <= rd_addr_in;
@@ -55,8 +61,9 @@ always @(posedge clk or posedge rst) begin
         jump_addr_out <= jump_addr_in;
         instr_id_out <= instr_id_in;
         rd_valid_out <= rd_valid_in;
+        valid_out <= valid_in;         // NEW
     end
-    // else: hold all values during stall
+    // else hold all values
 end
 
 endmodule

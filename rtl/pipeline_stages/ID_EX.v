@@ -1,3 +1,6 @@
+`timescale 1ns/1ps
+`default_nettype none
+
 module ID_EX(
     input wire clk,
     input wire rst,
@@ -16,6 +19,7 @@ module ID_EX(
     input wire cache_stall,
     input wire hazard_stall,
     input wire flush,
+    input wire valid_in,               // NEW
     output reg rs1_valid_out,
     output reg rs2_valid_out,
     output reg rd_valid_out,
@@ -27,7 +31,8 @@ module ID_EX(
     output reg [5:0] instr_id_out,
     output reg [31:0] pc_out,
     output reg [31:0] rs1_value_out,
-    output reg [31:0] rs2_value_out
+    output reg [31:0] rs2_value_out,
+    output reg valid_out               // NEW
 );
 
 always @(posedge clk or posedge rst) begin
@@ -44,8 +49,9 @@ always @(posedge clk or posedge rst) begin
         pc_out <= 32'b0;
         rs1_value_out <= 32'b0;
         rs2_value_out <= 32'b0;
+        valid_out <= 1'b0;             // NEW
     end else if (flush || hazard_stall) begin
-        // Insert bubble for branch flush or load-use hazard
+        // Insert bubble - mark as invalid
         rs1_valid_out <= 1'b0;
         rs2_valid_out <= 1'b0;
         rd_valid_out <= 1'b0;
@@ -58,8 +64,9 @@ always @(posedge clk or posedge rst) begin
         pc_out <= pc_in;
         rs1_value_out <= 32'b0;
         rs2_value_out <= 32'b0;
+        valid_out <= 1'b0;             // NEW - bubble is invalid
     end else if (!cache_stall) begin
-        // Normal operation - advance pipeline
+        // Normal operation
         rs1_valid_out <= rs1_valid_in;
         rs2_valid_out <= rs2_valid_in;
         rd_valid_out <= rd_valid_in;
@@ -72,8 +79,9 @@ always @(posedge clk or posedge rst) begin
         pc_out <= pc_in;
         rs1_value_out <= rs1_value_in;
         rs2_value_out <= rs2_value_in;
+        valid_out <= valid_in;         // NEW
     end
-    // else: cache_stall - hold all values
+    // else cache_stall: hold all values including valid
 end
 
 endmodule
