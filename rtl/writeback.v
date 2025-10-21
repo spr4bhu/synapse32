@@ -2,10 +2,11 @@
 `include "instr_defines.vh"
 
 module writeback (
+    input wire valid_in,               // NEW: valid bit from MEM_WB
     input wire rd_valid_in,
     input wire [4:0] rd_addr_in,
     input wire [31:0] rd_value_in,
-    input wire [31:0] mem_data_in,         // Changed from mem_read_in
+    input wire [31:0] mem_data_in,
     input wire [5:0] instr_id_in,
     output wire [4:0] rd_addr_out,
     output wire [31:0] rd_value_out,
@@ -18,10 +19,10 @@ module writeback (
                            (instr_id_in == INSTR_LBU) || 
                            (instr_id_in == INSTR_LHU);
     
-    // Select appropriate data to write back
     assign rd_addr_out = rd_addr_in;
-    // CRITICAL: Use direct memory data for loads (available at correct timing in WB stage)
     assign rd_value_out = is_load_instr ? mem_data_in : rd_value_in;
-    assign wr_en_out = rd_valid_in;
+    
+    // CRITICAL FIX: Only write if instruction is valid
+    assign wr_en_out = valid_in && rd_valid_in;
     
 endmodule

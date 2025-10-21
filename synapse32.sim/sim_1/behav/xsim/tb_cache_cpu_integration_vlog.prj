@@ -1,0 +1,36 @@
+# compile verilog/system verilog design source files
+verilog xil_defaultlib  --include "../../../../rtl/include" \
+"../../../../rtl/pipeline_stages/EX_MEM.v" \
+"../../../../rtl/pipeline_stages/ID_EX.v" \
+"../../../../rtl/pipeline_stages/IF_ID.v" \
+"../../../../rtl/pipeline_stages/MEM_WB.v" \
+"../../../../rtl/core_modules/alu.v" \
+"../../../../rtl/burst_controller.v" \
+"../../../../rtl/core_modules/csr_exec.v" \
+"../../../../rtl/core_modules/csr_file.v" \
+"../../../../rtl/data_mem.v" \
+"../../../../rtl/core_modules/decoder.v" \
+"../../../../rtl/execution_unit.v" \
+"../../../../rtl/pipeline_stages/forwarding_unit.v" \
+"../../../../rtl/icache_nway_multiword.v" \
+"../../../../rtl/instr_mem.v" \
+"../../../../rtl/core_modules/interrupt_controller.v" \
+"../../../../rtl/pipeline_stages/load_use_detector.v" \
+"../../../../rtl/memory_unit.v" \
+"../../../../rtl/core_modules/pc.v" \
+"../../../../rtl/core_modules/registerfile.v" \
+"../../../../rtl/riscv_cpu.v" \
+"../../../../rtl/pipeline_stages/store_load_detector.v" \
+"../../../../rtl/core_modules/timer.v" \
+"../../../../rtl/top.v" \
+"../../../../rtl/core_modules/uart.v" \
+"../../../../rtl/writeback.v" \
+
+sv xil_defaultlib  --include "../../../../rtl/include" \
+"../../../../synapse32.srcs/sim_1/new/cache_test.sv" \
+
+# compile glbl module
+verilog xil_defaultlib "glbl.v"
+
+# Do not sort compile order
+nosort

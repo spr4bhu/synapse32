@@ -4,7 +4,6 @@
 module MEM_WB (
     input wire clk,
     input wire rst,
-    input wire stall,
     input wire [4:0] rs1_addr_in,
     input wire [4:0] rs2_addr_in,
     input wire [4:0] rd_addr_in,
@@ -53,7 +52,7 @@ always @(posedge clk or posedge rst) begin
         instr_id_out <= 6'b0;
         rd_valid_out <= 1'b0;
         valid_out <= 1'b0;             // NEW
-    end else if (!stall) begin
+    end else begin
         rs1_addr_out <= rs1_addr_in;
         rs2_addr_out <= rs2_addr_in;
         rd_addr_out <= rd_addr_in;

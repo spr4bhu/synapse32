@@ -380,7 +380,6 @@ module riscv_cpu (
     EX_MEM ex_mem_inst0 (
         .clk(clk),
         .rst(rst),
-        .stall(cache_stall),
         .rs1_addr_in(id_ex_inst0_rs1_addr_out),
         .rs2_addr_in(id_ex_inst0_rs2_addr_out),
         .rd_addr_in(id_ex_inst0_rd_addr_out),
@@ -443,7 +442,6 @@ module riscv_cpu (
     MEM_WB mem_wb_inst0 (
         .clk(clk),
         .rst(rst),
-        .stall(cache_stall),              // CHANGED
         .mem_data_in(module_read_data_in),
         .rs1_addr_in(ex_mem_inst0_rs1_addr_out),
         .rs2_addr_in(ex_mem_inst0_rs2_addr_out),
@@ -478,6 +476,7 @@ module riscv_cpu (
 
     // Instantiate Write Back Stage
     writeback wb_inst0 (
+        .valid_in(mem_wb_valid_out),
         .rd_valid_in(mem_wb_inst0_rd_valid_out),
         .rd_addr_in(mem_wb_inst0_rd_addr_out),
         .rd_value_in(mem_wb_inst0_exec_output_out),
@@ -487,5 +486,13 @@ module riscv_cpu (
         .rd_value_out(wb_inst0_rd_value_out),
         .wr_en_out(wb_inst0_wr_en_out)
     );
+
+    always @(posedge clk) begin
+        if (ex_mem_valid_out && mem_unit_inst0_wr_enable_out) begin
+            $display("T=%0t MEM_WRITE: addr=0x%08x data=0x%08x valid=%b",
+                    $time, mem_unit_inst0_wr_addr_out, 
+                    mem_unit_inst0_wr_data_out, ex_mem_valid_out);
+        end
+    end
 
 endmodule

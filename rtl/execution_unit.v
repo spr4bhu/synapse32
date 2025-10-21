@@ -149,13 +149,13 @@ always @(*) begin
                 end
                 7'b0000011: begin // Load
                     mem_addr = rs1_value + imm;
-                    $display("T=%0t EXEC LOAD: rs1_value=0x%08x, imm=0x%08x, addr=0x%08x",
-                             $time, rs1_value, imm, mem_addr);
+                    // $display("T=%0t EXEC LOAD: rs1_value=0x%08x, imm=0x%08x, addr=0x%08x",
+                    //          $time, rs1_value, imm, mem_addr);
                 end
                 7'b0100011: begin // Store
                     mem_addr = rs1_value + imm;
-                    $display("T=%0t EXEC STORE: rs1=0x%08x, imm=%d (0x%08x), addr=0x%08x",
-                             $time, rs1_value, $signed(imm), imm, mem_addr);
+                    // $display("T=%0t EXEC STORE: rs1=0x%08x, imm=%d (0x%08x), addr=0x%08x",
+                    //          $time, rs1_value, $signed(imm), imm, mem_addr);
                 end
                 7'b1100011: begin // Branch
                     case (instr_id)
@@ -219,7 +219,7 @@ always @(*) begin
                 end
                 7'b0110111: begin // LUI
                     exec_output = imm;
-                    $display("T=%0t EXEC LUI: imm=0x%08x", $time, imm);
+                    // $display("T=%0t EXEC LUI: imm=0x%08x", $time, imm);
                 end
                 7'b0010111: begin // AUIPC
                     exec_output = pc_input + imm;

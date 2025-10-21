@@ -19,7 +19,7 @@ module ID_EX(
     input wire cache_stall,
     input wire hazard_stall,
     input wire flush,
-    input wire valid_in,               // NEW
+    input wire valid_in,
     output reg rs1_valid_out,
     output reg rs2_valid_out,
     output reg rd_valid_out,
@@ -32,7 +32,7 @@ module ID_EX(
     output reg [31:0] pc_out,
     output reg [31:0] rs1_value_out,
     output reg [31:0] rs2_value_out,
-    output reg valid_out               // NEW
+    output reg valid_out
 );
 
 always @(posedge clk or posedge rst) begin
@@ -49,7 +49,7 @@ always @(posedge clk or posedge rst) begin
         pc_out <= 32'b0;
         rs1_value_out <= 32'b0;
         rs2_value_out <= 32'b0;
-        valid_out <= 1'b0;             // NEW
+        valid_out <= 1'b0;
     end else if (flush || hazard_stall) begin
         // Insert bubble - mark as invalid
         rs1_valid_out <= 1'b0;
@@ -61,11 +61,28 @@ always @(posedge clk or posedge rst) begin
         rd_addr_out <= 5'b0;
         opcode_out <= 7'b0;
         instr_id_out <= 6'b0;
-        pc_out <= pc_in;
+        pc_out <= pc_in;  // Keep PC for flow tracking
         rs1_value_out <= 32'b0;
         rs2_value_out <= 32'b0;
-        valid_out <= 1'b0;             // NEW - bubble is invalid
-    end else if (!cache_stall) begin
+        valid_out <= 1'b0;
+    end else if (cache_stall) begin
+        // CRITICAL FIX: During cache stall, output COMPLETE BUBBLES
+        // Zero ALL outputs to prevent garbage execution
+        valid_out <= 1'b0;
+        rd_valid_out <= 1'b0;
+        rs1_valid_out <= 1'b0;
+        rs2_valid_out <= 1'b0;
+        opcode_out <= 7'b0;
+        instr_id_out <= 6'b0;
+        // Zero data fields too!
+        imm_out <= 32'b0;
+        rs1_addr_out <= 5'b0;
+        rs2_addr_out <= 5'b0;
+        rd_addr_out <= 5'b0;
+        pc_out <= 32'b0;
+        rs1_value_out <= 32'b0;
+        rs2_value_out <= 32'b0;
+    end else begin
         // Normal operation
         rs1_valid_out <= rs1_valid_in;
         rs2_valid_out <= rs2_valid_in;
@@ -79,9 +96,8 @@ always @(posedge clk or posedge rst) begin
         pc_out <= pc_in;
         rs1_value_out <= rs1_value_in;
         rs2_value_out <= rs2_value_in;
-        valid_out <= valid_in;         // NEW
+        valid_out <= valid_in;
     end
-    // else cache_stall: hold all values including valid
 end
 
 endmodule
