@@ -4,6 +4,7 @@
 module ID_EX(
     input wire clk,
     input wire rst,
+    input wire enable,                 // INDUSTRY STANDARD: Enable signal for stalls
     input wire rs1_valid_in,
     input wire rs2_valid_in,
     input wire rd_valid_in,
@@ -51,7 +52,7 @@ always @(posedge clk or posedge rst) begin
         rs2_value_out <= 32'b0;
         valid_out <= 1'b0;
     end else if (flush || hazard_stall) begin
-        // Insert bubble - mark as invalid
+        // Insert bubble for hazards - mark as invalid
         rs1_valid_out <= 1'b0;
         rs2_valid_out <= 1'b0;
         rd_valid_out <= 1'b0;
@@ -65,24 +66,7 @@ always @(posedge clk or posedge rst) begin
         rs1_value_out <= 32'b0;
         rs2_value_out <= 32'b0;
         valid_out <= 1'b0;
-    end else if (cache_stall) begin
-        // CRITICAL FIX: During cache stall, output COMPLETE BUBBLES
-        // Zero ALL outputs to prevent garbage execution
-        valid_out <= 1'b0;
-        rd_valid_out <= 1'b0;
-        rs1_valid_out <= 1'b0;
-        rs2_valid_out <= 1'b0;
-        opcode_out <= 7'b0;
-        instr_id_out <= 6'b0;
-        // Zero data fields too!
-        imm_out <= 32'b0;
-        rs1_addr_out <= 5'b0;
-        rs2_addr_out <= 5'b0;
-        rd_addr_out <= 5'b0;
-        pc_out <= 32'b0;
-        rs1_value_out <= 32'b0;
-        rs2_value_out <= 32'b0;
-    end else begin
+    end else if (enable) begin
         // Normal operation
         rs1_valid_out <= rs1_valid_in;
         rs2_valid_out <= rs2_valid_in;
@@ -98,6 +82,7 @@ always @(posedge clk or posedge rst) begin
         rs2_value_out <= rs2_value_in;
         valid_out <= valid_in;
     end
+    // else hold all values (stalled)
 end
 
 endmodule

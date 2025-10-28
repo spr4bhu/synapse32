@@ -6,24 +6,24 @@ module IF_ID(
     input wire rst,
     input wire [31:0] pc_in,
     input wire [31:0] instruction_in,
-    input wire stall,
-    input wire valid_in,              // NEW
+    input wire enable,                 // INDUSTRY STANDARD: Enable signal for stalls
+    input wire valid_in,
     output reg [31:0] pc_out,
     output reg [31:0] instruction_out,
-    output reg valid_out               // NEW
+    output reg valid_out
 );
 
 always @(posedge clk or posedge rst) begin
     if (rst) begin
         pc_out <= 32'b0;
         instruction_out <= 32'b0;
-        valid_out <= 1'b0;            // NEW
-    end else if (!stall) begin        // Simplified - just check !stall
+        valid_out <= 1'b0;
+    end else if (enable) begin
         pc_out <= pc_in;
         instruction_out <= instruction_in;
-        valid_out <= valid_in;        // NEW
+        valid_out <= valid_in;
     end
-    // else hold all values (including valid)
+    // else hold all values (stalled)
 end
 
 endmodule

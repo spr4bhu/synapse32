@@ -198,11 +198,11 @@ module riscv_cpu (
         .rst(rst),
         .pc_in(pc_inst0_out),
         .instruction_in(branch_flush ? 32'h13 : module_instr_in),
-        .stall(cache_stall || load_use_stall),
-        .valid_in(!cache_stall),          // NEW
+        .enable(!(cache_stall || load_use_stall)),  // INDUSTRY STANDARD: Freeze on any stall
+        .valid_in(!cache_stall),
         .pc_out(if_id_pc_out),
         .instruction_out(if_id_instr_out),
-        .valid_out(if_id_valid_out)       // NEW
+        .valid_out(if_id_valid_out)
     );
 
     // Instantiate Decoder
@@ -249,6 +249,7 @@ module riscv_cpu (
     ID_EX id_ex_inst0 (
         .clk(clk),
         .rst(rst),
+        .enable(!cache_stall),             // INDUSTRY STANDARD: Freeze on cache stall
         .rs1_valid_in(decoder_inst0_rs1_valid_out),
         .rs2_valid_in(decoder_inst0_rs2_valid_out),
         .rd_valid_in(decoder_inst0_rd_valid_out),
@@ -261,10 +262,10 @@ module riscv_cpu (
         .pc_in(if_id_pc_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
-        .cache_stall(cache_stall),
+        .cache_stall(cache_stall),         // Still used for checking, not as enable
         .hazard_stall(load_use_stall),
         .flush(pipeline_flush),
-        .valid_in(if_id_valid_out),       // NEW
+        .valid_in(if_id_valid_out),
         .rs1_valid_out(id_ex_inst0_rs1_valid_out),
         .rs2_valid_out(id_ex_inst0_rs2_valid_out),
         .rd_valid_out(id_ex_inst0_rd_valid_out),
@@ -380,6 +381,7 @@ module riscv_cpu (
     EX_MEM ex_mem_inst0 (
         .clk(clk),
         .rst(rst),
+        .enable(!cache_stall),             // STANDARD: Freeze during cache stalls
         .rs1_addr_in(id_ex_inst0_rs1_addr_out),
         .rs2_addr_in(id_ex_inst0_rs2_addr_out),
         .rd_addr_in(id_ex_inst0_rd_addr_out),
@@ -410,9 +412,11 @@ module riscv_cpu (
 
     // Instantiate Memory Unit
     memory_unit mem_unit_inst0 (
-        .clk(clk),                          // ADD
-        .rst(rst),                          // ADD
-        .valid_in(ex_mem_valid_out),        // ADD - connect valid bit
+        .clk(clk),
+        .rst(rst),
+        .valid_in(ex_mem_valid_out),        // Connect valid bit
+        .cache_stall(cache_stall),          // PDF SOLUTION 2: Comprehensive gating
+        .hazard_stall(load_use_stall),      // PDF SOLUTION 2: Comprehensive gating
         .instr_id(ex_mem_inst0_instr_id_out),
         .rs2_value(ex_mem_inst0_rs2_value_out),
         .mem_addr(ex_mem_inst0_mem_addr_out),
@@ -425,7 +429,7 @@ module riscv_cpu (
         .load_type(mem_unit_inst0_load_type_out)
     );
 
-    
+
 
     // Instantiate store-load hazard detector
     store_load_detector store_load_detector_inst0 (
@@ -442,6 +446,7 @@ module riscv_cpu (
     MEM_WB mem_wb_inst0 (
         .clk(clk),
         .rst(rst),
+        .enable(!cache_stall),         // STANDARD: Freeze during cache stalls
         .mem_data_in(module_read_data_in),
         .rs1_addr_in(ex_mem_inst0_rs1_addr_out),
         .rs2_addr_in(ex_mem_inst0_rs2_addr_out),

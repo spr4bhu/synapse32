@@ -21,8 +21,13 @@ module writeback (
     
     assign rd_addr_out = rd_addr_in;
     assign rd_value_out = is_load_instr ? mem_data_in : rd_value_in;
-    
-    // CRITICAL FIX: Only write if instruction is valid
-    assign wr_en_out = valid_in && rd_valid_in;
-    
+
+    // PDF SOLUTION 3: Writeback gating
+    // MEM_WB pipeline register already gates updates with enable(!cache_stall)
+    // So instructions only reach WB when they're ready to write
+    // Just need to check validity and x0 protection
+    assign wr_en_out = valid_in &&              // Instruction is valid (not a bubble)
+                       rd_valid_in &&            // Instruction requires write
+                       (rd_addr_in != 5'b0);     // Not writing to x0 (RISC-V hardwired zero)
+
 endmodule

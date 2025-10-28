@@ -5,6 +5,8 @@ module memory_unit (
     input wire clk,
     input wire rst,
     input wire valid_in,
+    input wire cache_stall,        // NEW: Cache stall signal for comprehensive gating
+    input wire hazard_stall,       // NEW: Hazard stall signal for comprehensive gating
     input wire [5:0] instr_id,
     input wire [31:0] rs2_value,
     input wire [31:0] mem_addr,
@@ -31,9 +33,10 @@ module memory_unit (
                      (instr_id == INSTR_LBU) || 
                      (instr_id == INSTR_LHU);
     
-    // SIMPLE: Just gate on valid bit
-    assign wr_enable = is_store && valid_in;
-    assign read_enable = is_load && valid_in;
+    // PDF SOLUTION 2: Comprehensive gating with stalls
+    // Gate memory operations with cache_stall to prevent operations during stalls
+    assign wr_enable = is_store && valid_in && !cache_stall && !hazard_stall;
+    assign read_enable = is_load && valid_in && !cache_stall && !hazard_stall;
     
     assign wr_addr = mem_addr;
     assign read_addr = mem_addr;

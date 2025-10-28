@@ -4,6 +4,7 @@
 module MEM_WB (
     input wire clk,
     input wire rst,
+    input wire enable,                 // INDUSTRY STANDARD: Enable signal for stalls
     input wire [4:0] rs1_addr_in,
     input wire [4:0] rs2_addr_in,
     input wire [4:0] rd_addr_in,
@@ -19,7 +20,7 @@ module MEM_WB (
     input wire rd_valid_in,
     input wire store_load_hazard,
     input wire [31:0] store_data,
-    input wire valid_in,               // NEW
+    input wire valid_in,
     output reg [4:0] rs1_addr_out,
     output reg [4:0] rs2_addr_out,
     output reg [4:0] rd_addr_out,
@@ -33,7 +34,7 @@ module MEM_WB (
     output reg [31:0] jump_addr_out,
     output reg [5:0] instr_id_out,
     output reg rd_valid_out,
-    output reg valid_out               // NEW
+    output reg valid_out
 );
 
 always @(posedge clk or posedge rst) begin
@@ -51,8 +52,9 @@ always @(posedge clk or posedge rst) begin
         jump_addr_out <= 32'b0;
         instr_id_out <= 6'b0;
         rd_valid_out <= 1'b0;
-        valid_out <= 1'b0;             // NEW
-    end else begin
+        valid_out <= 1'b0;
+    end else if (enable) begin
+        // INDUSTRY STANDARD: Only update when enabled (not stalled)
         rs1_addr_out <= rs1_addr_in;
         rs2_addr_out <= rs2_addr_in;
         rd_addr_out <= rd_addr_in;
@@ -66,9 +68,9 @@ always @(posedge clk or posedge rst) begin
         jump_addr_out <= jump_addr_in;
         instr_id_out <= instr_id_in;
         rd_valid_out <= rd_valid_in;
-        valid_out <= valid_in;         // NEW
+        valid_out <= valid_in;
     end
-    // else hold all values
+    // else hold all values (stalled)
 end
 
 endmodule

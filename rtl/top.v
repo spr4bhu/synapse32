@@ -77,12 +77,13 @@ module top (
     
     // Select the appropriate address for memory access
     assign data_mem_addr = cpu_mem_write_en ? cpu_mem_write_addr : cpu_mem_read_addr;
-    
-    // Multiplex read data based on address
-    assign mem_read_data = timer_access ? timer_read_data : 
+
+    // INDUSTRY STANDARD: Pass memory data directly to CPU
+    // Data memory is combinational, MEM_WB pipeline register handles sampling timing
+    assign mem_read_data = timer_access ? timer_read_data :
                           data_mem_access ? data_mem_read_data :
                           uart_access ? uart_read_data :
-                            instr_mem_access ? instr_read_data : 32'h00000000;
+                          instr_mem_access ? instr_read_data : 32'h00000000;
     
     // Debug outputs
     assign pc_debug = cpu_pc_out;
@@ -150,15 +151,8 @@ module top (
         .mem_data(instr_to_burst_data)
     );
 
-    reg [31:0] mem_data_reg;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            mem_data_reg <= 32'b0;
-        end else if (cpu_mem_read_en) begin
-            mem_data_reg <= mem_read_data;
-        end
-    end
+    // INDUSTRY STANDARD: Pass memory data directly to CPU
+    // MEM_WB stage has enable signal to prevent sampling during stalls
 
     // Instantiate the RISC-V CPU core
     riscv_cpu cpu_inst (
@@ -168,7 +162,7 @@ module top (
         .software_interrupt(software_interrupt),
         .external_interrupt(external_interrupt),
         .module_instr_in(instr_to_cpu),
-        .module_read_data_in(mem_data_reg),
+        .module_read_data_in(mem_read_data),
         .module_pc_out(cpu_pc_out),
         .module_wr_data_out(cpu_mem_write_data),
         .module_mem_wr_en(cpu_mem_write_en),
@@ -196,18 +190,9 @@ module top (
         .instr_p2(instr_read_data)
     );
 
-    reg [31:0] data_mem_addr_reg;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            data_mem_addr_reg <= 32'h0;
-        end else if (cpu_mem_write_en || cpu_mem_read_en) begin
-            data_mem_addr_reg <= cpu_mem_write_en ? cpu_mem_write_addr : cpu_mem_read_addr;
-        end
-        // else hold previous address
-    end
-
-    // Instantiate data memory  
+    // INDUSTRY STANDARD: Use combinational address (no registered delay)
+    // Synchronous memories handle address internally
+    // Instantiate data memory
     data_mem #(
         .DATA_WIDTH(32),
         .ADDR_WIDTH(32),
@@ -218,7 +203,7 @@ module top (
         .rd_en(cpu_mem_read_en && data_mem_access),
         .write_byte_enable(cpu_write_byte_enable),
         .load_type(cpu_load_type),
-        .addr(data_mem_addr_reg - `DATA_MEM_BASE),
+        .addr(data_mem_addr - `DATA_MEM_BASE),
         .wr_data(cpu_mem_write_data),
         .rd_data_out(data_mem_read_data)
     );
