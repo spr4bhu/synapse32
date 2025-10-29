@@ -2,6 +2,7 @@
 module csr_file (
     input wire clk,
     input wire rst,
+    input wire cache_stall,        // NEW: Prevent CSR writes during cache stalls
     input wire [11:0] csr_addr,
     input wire [31:0] write_data,
     input wire write_enable,
@@ -17,7 +18,7 @@ module csr_file (
     input wire mret_instruction,
     input wire ecall_exception,
     input wire ebreak_exception,
-    
+
     // Timer interrupt input
     input wire timer_interrupt,
     input wire software_interrupt,
@@ -108,8 +109,8 @@ module csr_file (
                 mstatus[3] <= 1'b0;              // Disable interrupts
             end
             
-            // Normal CSR writes
-            else if (write_enable && csr_valid) begin
+            // Normal CSR writes - gate with cache_stall to prevent corruption during stalls
+            else if (write_enable && csr_valid && !cache_stall) begin
                 case (csr_addr)
                     CSR_MSTATUS:  mstatus <= write_data;
                     CSR_MIE:      mie <= write_data;

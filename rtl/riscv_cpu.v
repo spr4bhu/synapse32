@@ -113,6 +113,22 @@ module riscv_cpu (
     wire [3:0] mem_unit_inst0_write_byte_enable_out;
     wire [2:0] mem_unit_inst0_load_type_out;
 
+    // Store buffer signals
+    wire mem_unit_capture_store;
+    wire [31:0] mem_unit_store_addr;
+    wire [31:0] mem_unit_store_data;
+    wire [3:0] mem_unit_store_byte_en;
+    wire mem_unit_load_request;
+    wire [31:0] mem_unit_load_data;
+    wire buffer_forward_valid;
+    wire [31:0] buffer_forward_data;
+
+    // Store buffer to memory signals
+    wire store_buffer_wr_en;
+    wire [31:0] store_buffer_wr_addr;
+    wire [31:0] store_buffer_wr_data;
+    wire [3:0] store_buffer_wr_byte_enable;
+
     // MEM_WB pipeline signals
     wire [4:0] mem_wb_inst0_rs1_addr_out;
     wire [4:0] mem_wb_inst0_rs2_addr_out;
@@ -159,12 +175,13 @@ module riscv_cpu (
     assign module_pc_out = pc_inst0_out;
 
     // Memory interface assignments
-    assign module_mem_wr_en = mem_unit_inst0_wr_enable_out;
+    // Memory interface - writes driven by store buffer, reads by memory unit
+    assign module_mem_wr_en = store_buffer_wr_en;
     assign module_mem_rd_en = mem_unit_inst0_read_enable_out;
-    assign module_write_addr = mem_unit_inst0_wr_addr_out;
+    assign module_write_addr = store_buffer_wr_addr;
     assign module_read_addr = mem_unit_inst0_read_addr_out;
-    assign module_wr_data_out = mem_unit_inst0_wr_data_out;
-    assign module_write_byte_enable = mem_unit_inst0_write_byte_enable_out;
+    assign module_wr_data_out = store_buffer_wr_data;
+    assign module_write_byte_enable = store_buffer_wr_byte_enable;
     assign module_load_type = mem_unit_inst0_load_type_out;
 
     // Register file assignments
@@ -318,6 +335,7 @@ module riscv_cpu (
     csr_file csr_file_inst (
         .clk(clk),
         .rst(rst),
+        .cache_stall(cache_stall),          // NEW: Gate CSR writes during cache stalls
         .csr_addr(csr_addr),
         .write_data(csr_write_data),
         .write_enable(csr_write_enable),
@@ -420,16 +438,57 @@ module riscv_cpu (
         .instr_id(ex_mem_inst0_instr_id_out),
         .rs2_value(ex_mem_inst0_rs2_value_out),
         .mem_addr(ex_mem_inst0_mem_addr_out),
+
+        // Store buffer interface
+        .capture_store(mem_unit_capture_store),
+        .store_addr_out(mem_unit_store_addr),
+        .store_data_out(mem_unit_store_data),
+        .store_byte_en_out(mem_unit_store_byte_en),
+
+        // Load forwarding from store buffer
+        .buffer_forward_valid(buffer_forward_valid),
+        .buffer_forward_data(buffer_forward_data),
+        .load_request(mem_unit_load_request),
+
+        // Original memory interface (deprecated, kept for compatibility)
         .wr_enable(mem_unit_inst0_wr_enable_out),
         .read_enable(mem_unit_inst0_read_enable_out),
         .wr_data(mem_unit_inst0_wr_data_out),
         .read_addr(mem_unit_inst0_read_addr_out),
         .wr_addr(mem_unit_inst0_wr_addr_out),
         .write_byte_enable(mem_unit_inst0_write_byte_enable_out),
-        .load_type(mem_unit_inst0_load_type_out)
+        .load_type(mem_unit_inst0_load_type_out),
+
+        // Load data
+        .mem_read_data(module_read_data_in),
+        .load_data_out(mem_unit_load_data)
     );
 
+    // Instantiate Store Buffer
+    store_buffer store_buffer_inst (
+        .clk(clk),
+        .rst(rst),
+        .cache_stall(cache_stall),
+        .hazard_stall(load_use_stall),
 
+        // Store capture interface from memory_unit
+        .capture_store(mem_unit_capture_store),
+        .store_addr(mem_unit_store_addr),
+        .store_data(mem_unit_store_data),
+        .store_byte_enable(mem_unit_store_byte_en),
+
+        // Load forwarding interface to memory_unit
+        .load_request(mem_unit_load_request),
+        .load_addr(ex_mem_inst0_mem_addr_out),  // Load address from EX_MEM
+        .forward_valid(buffer_forward_valid),
+        .forward_data(buffer_forward_data),
+
+        // Memory write interface
+        .mem_wr_en(store_buffer_wr_en),
+        .mem_wr_addr(store_buffer_wr_addr),
+        .mem_wr_data(store_buffer_wr_data),
+        .mem_wr_byte_enable(store_buffer_wr_byte_enable)
+    );
 
     // Instantiate store-load hazard detector
     store_load_detector store_load_detector_inst0 (
@@ -447,7 +506,7 @@ module riscv_cpu (
         .clk(clk),
         .rst(rst),
         .enable(!cache_stall),         // STANDARD: Freeze during cache stalls
-        .mem_data_in(module_read_data_in),
+        .mem_data_in(mem_unit_load_data),  // Use forwarded data from store buffer if available
         .rs1_addr_in(ex_mem_inst0_rs1_addr_out),
         .rs2_addr_in(ex_mem_inst0_rs2_addr_out),
         .rd_addr_in(ex_mem_inst0_rd_addr_out),

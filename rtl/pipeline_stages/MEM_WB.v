@@ -62,7 +62,7 @@ always @(posedge clk or posedge rst) begin
         rs2_value_out <= rs2_value_in;
         pc_out <= pc_in;
         mem_addr_out <= mem_addr_in;
-        mem_data_out <= store_load_hazard ? store_data : mem_data_in;
+        mem_data_out <= mem_data_in;  // Store buffer already handles forwarding
         exec_output_out <= exec_output_in;
         jump_signal_out <= jump_signal_in;
         jump_addr_out <= jump_addr_in;
