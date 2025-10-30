@@ -1,0 +1,26 @@
+Parsing VCD file: sim_build/riscv_cpu.fst
+Found 355 signal definitions
+Parsed 313 signal traces
+
+=== Running Bug Detection ===
+
+[Bug #1] Checking for memory write enables during stalls...
+  Found wr_enable signals: ['mem_unit_inst0_write_byte_enable_out [3:0]', 'mem_unit_inst0_wr_enable_out', 'wr_enable']
+  Found cache_stall signals: ['cache_stall']
+  ✅ No occurrences of Bug #1
+
+[Bug #3] Checking for writeback enables during stalls...
+  Found wr_en_out signals: ['wb_inst0_wr_en_out', 'wr_en_out']
+  ✅ No occurrences of Bug #3
+
+[Bug #5] Checking for mem_data_reg sampling during stalls...
+  ⚠️  Required signals not found in VCD
+
+[Bug #6] Checking for address decoding races...
+  ✅ No occurrences of Bug #6
+
+============================================================
+ANALYSIS COMPLETE
+============================================================
+Total bugs found: 0
+Bug types: 

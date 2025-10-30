@@ -54,9 +54,9 @@ def create_combined_stall_hex():
         0x00822823,  # sw x8, 16(x4)       # Store 142 to memory[16]
         0x01022483,  # lw x9, 16(x4)       # x9 = memory[16] = 142 (load)
         0x00148513,  # addi x10, x9, 1     # x10 = x9 + 1 = 143 (LOAD-USE HAZARD)
-        
+
         # Jump to another distant block
-        0x0c000067,  # jalr x0, x0, 192    # Jump forward (0x180)
+        0x09c0006f,  # jal x0, 156         # Jump to 0x180 (PC-relative: 0xE4 + 0x9C = 0x180)
         0x00000013,  # nop
     ])
     
@@ -201,9 +201,10 @@ async def test_combined_stall_interaction(dut):
             
         except Exception as e:
             pass
-        
-        if len(combined_metrics["cache_miss_events"]) >= 3 and len(combined_metrics["load_use_events"]) >= 5:
-            break
+
+        # REMOVED: Early exit condition was preventing full program execution
+        # if len(combined_metrics["cache_miss_events"]) >= 3 and len(combined_metrics["load_use_events"]) >= 5:
+        #     break
     
     if interaction_start is not None:
         interaction_duration = cycle - interaction_start
