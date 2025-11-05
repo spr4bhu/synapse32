@@ -82,7 +82,7 @@ module riscv_cpu (
     wire [31:0] ex_inst0_mem_addr_out;
     wire [31:0] ex_inst0_rs1_value_out;
     wire [31:0] ex_inst0_rs2_value_out;
-    wire ex_inst0_valid_out;              // ADD THIS LINE
+    wire ex_inst0_valid_out;
     wire ex_enable_signal;
     assign ex_enable_signal = id_ex_valid_out && !cache_stall;
 
@@ -105,12 +105,8 @@ module riscv_cpu (
     wire ex_mem_inst0_rd_valid_out;
 
     // Memory unit signals
-    wire mem_unit_inst0_wr_enable_out;
     wire mem_unit_inst0_read_enable_out;
-    wire [31:0] mem_unit_inst0_wr_data_out;
     wire [31:0] mem_unit_inst0_read_addr_out;
-    wire [31:0] mem_unit_inst0_wr_addr_out;
-    wire [3:0] mem_unit_inst0_write_byte_enable_out;
     wire [2:0] mem_unit_inst0_load_type_out;
 
     // Store buffer signals
@@ -189,15 +185,6 @@ module riscv_cpu (
     assign rf_inst0_wr_en = wb_inst0_wr_en_out;
     assign rf_inst0_rd_value_in = wb_inst0_rd_value_out;
 
-    // Add after wire declarations, before module instantiations
-    always @(posedge clk) begin
-        if (decoder_inst0_opcode_out == 7'b0100011) begin // Stores only
-            $display("T=%0t DEBUG: cache_stall=%b if_id_instr=%h decoder_out: rs1=%d rs2=%d imm=%d",
-                    $time, cache_stall, if_id_instr_out, 
-                    decoder_inst0_rs1_out, decoder_inst0_rs2_out, $signed(decoder_inst0_imm_out));
-        end
-    end
-
 
     // Instantiate PC
     pc pc_inst0 (
@@ -215,7 +202,7 @@ module riscv_cpu (
         .rst(rst),
         .pc_in(pc_inst0_out),
         .instruction_in(branch_flush ? 32'h13 : module_instr_in),
-        .enable(!(cache_stall || load_use_stall)),  // INDUSTRY STANDARD: Freeze on any stall
+        .enable(!(cache_stall || load_use_stall)),
         .valid_in(!cache_stall),
         .pc_out(if_id_pc_out),
         .instruction_out(if_id_instr_out),
@@ -266,7 +253,7 @@ module riscv_cpu (
     ID_EX id_ex_inst0 (
         .clk(clk),
         .rst(rst),
-        .enable(!cache_stall),             // INDUSTRY STANDARD: Freeze on cache stall
+        .enable(!cache_stall),
         .rs1_valid_in(decoder_inst0_rs1_valid_out),
         .rs2_valid_in(decoder_inst0_rs2_valid_out),
         .rd_valid_in(decoder_inst0_rd_valid_out),
@@ -335,7 +322,7 @@ module riscv_cpu (
     csr_file csr_file_inst (
         .clk(clk),
         .rst(rst),
-        .cache_stall(cache_stall),          // NEW: Gate CSR writes during cache stalls
+        .cache_stall(cache_stall),
         .csr_addr(csr_addr),
         .write_data(csr_write_data),
         .write_enable(csr_write_enable),
@@ -356,7 +343,7 @@ module riscv_cpu (
 
     // Instantiate execution unit
     execution_unit ex_unit_inst0 (
-        .valid_in(ex_enable_signal),       // CHANGED - use valid bit instead of enable
+        .valid_in(ex_enable_signal),
         .rs1(id_ex_inst0_rs1_value_out),
         .rs2(id_ex_inst0_rs2_value_out),
         .imm(id_ex_inst0_imm_out),
@@ -399,7 +386,7 @@ module riscv_cpu (
     EX_MEM ex_mem_inst0 (
         .clk(clk),
         .rst(rst),
-        .enable(!cache_stall),             // STANDARD: Freeze during cache stalls
+        .enable(!cache_stall),
         .rs1_addr_in(id_ex_inst0_rs1_addr_out),
         .rs2_addr_in(id_ex_inst0_rs2_addr_out),
         .rd_addr_in(id_ex_inst0_rd_addr_out),
@@ -432,9 +419,9 @@ module riscv_cpu (
     memory_unit mem_unit_inst0 (
         .clk(clk),
         .rst(rst),
-        .valid_in(ex_mem_valid_out),        // Connect valid bit
-        .cache_stall(cache_stall),          // PDF SOLUTION 2: Comprehensive gating
-        .hazard_stall(load_use_stall),      // PDF SOLUTION 2: Comprehensive gating
+        .valid_in(ex_mem_valid_out),
+        .cache_stall(cache_stall),
+        .hazard_stall(load_use_stall),
         .instr_id(ex_mem_inst0_instr_id_out),
         .rs2_value(ex_mem_inst0_rs2_value_out),
         .mem_addr(ex_mem_inst0_mem_addr_out),
@@ -450,13 +437,9 @@ module riscv_cpu (
         .buffer_forward_data(buffer_forward_data),
         .load_request(mem_unit_load_request),
 
-        // Original memory interface (deprecated, kept for compatibility)
-        .wr_enable(mem_unit_inst0_wr_enable_out),
+        // Memory read interface
         .read_enable(mem_unit_inst0_read_enable_out),
-        .wr_data(mem_unit_inst0_wr_data_out),
         .read_addr(mem_unit_inst0_read_addr_out),
-        .wr_addr(mem_unit_inst0_wr_addr_out),
-        .write_byte_enable(mem_unit_inst0_write_byte_enable_out),
         .load_type(mem_unit_inst0_load_type_out),
 
         // Load data
@@ -505,8 +488,8 @@ module riscv_cpu (
     MEM_WB mem_wb_inst0 (
         .clk(clk),
         .rst(rst),
-        .enable(!cache_stall),         // STANDARD: Freeze during cache stalls
-        .mem_data_in(mem_unit_load_data),  // Use forwarded data from store buffer if available
+        .enable(!cache_stall),
+        .mem_data_in(mem_unit_load_data),
         .rs1_addr_in(ex_mem_inst0_rs1_addr_out),
         .rs2_addr_in(ex_mem_inst0_rs2_addr_out),
         .rd_addr_in(ex_mem_inst0_rd_addr_out),
@@ -550,13 +533,5 @@ module riscv_cpu (
         .rd_value_out(wb_inst0_rd_value_out),
         .wr_en_out(wb_inst0_wr_en_out)
     );
-
-    always @(posedge clk) begin
-        if (ex_mem_valid_out && mem_unit_inst0_wr_enable_out) begin
-            $display("T=%0t MEM_WRITE: addr=0x%08x data=0x%08x valid=%b",
-                    $time, mem_unit_inst0_wr_addr_out, 
-                    mem_unit_inst0_wr_data_out, ex_mem_valid_out);
-        end
-    end
 
 endmodule

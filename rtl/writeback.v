@@ -2,7 +2,7 @@
 `include "instr_defines.vh"
 
 module writeback (
-    input wire valid_in,               // NEW: valid bit from MEM_WB
+    input wire valid_in,
     input wire rd_valid_in,
     input wire [4:0] rd_addr_in,
     input wire [31:0] rd_value_in,
@@ -22,20 +22,8 @@ module writeback (
     assign rd_addr_out = rd_addr_in;
     assign rd_value_out = is_load_instr ? mem_data_in : rd_value_in;
 
-    // PDF SOLUTION 3: Writeback gating
-    // MEM_WB pipeline register already gates updates with enable(!cache_stall)
-    // So instructions only reach WB when they're ready to write
-    // Just need to check validity and x0 protection
     assign wr_en_out = valid_in &&              // Instruction is valid (not a bubble)
                        rd_valid_in &&            // Instruction requires write
                        (rd_addr_in != 5'b0);     // Not writing to x0 (RISC-V hardwired zero)
-
-    // DEBUG: Track x8 writes
-    always @(*) begin
-        if (wr_en_out && rd_addr_in == 5'd8) begin
-            $display("[WRITEBACK] @%t: WRITING x8 = 0x%h (valid=%b rd_valid=%b)",
-                     $time, rd_value_out, valid_in, rd_valid_in);
-        end
-    end
 
 endmodule

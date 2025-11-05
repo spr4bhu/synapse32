@@ -36,17 +36,6 @@ module store_buffer (
     assign forward_valid = buffer_valid && addr_match && load_request;
     assign forward_data = buffer_data;
 
-    // Debug output (can be enabled for debugging)
-    always @(posedge clk) begin
-        if (capture_store) begin
-            $display("[STORE_BUFFER] @%t: CAPTURE store addr=0x%h data=0x%h", $time, store_addr, store_data);
-        end
-        if (load_request) begin
-            $display("[STORE_BUFFER] @%t: LOAD REQUEST addr=0x%h buffer_valid=%b addr_match=%b forward=%b data=0x%h",
-                     $time, load_addr, buffer_valid, addr_match, forward_valid, forward_data);
-        end
-    end
-
     // Buffer management
     always @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -59,11 +48,8 @@ module store_buffer (
             mem_wr_data <= 32'b0;
             mem_wr_byte_enable <= 4'b0;
         end else if (!cache_stall) begin
-            // Pipeline is running normally (only gate with cache_stall, not hazard_stall)
-            // hazard_stall affects instruction fetch/decode, not memory operations in progress
 
             if (capture_store) begin
-                // New store to capture
                 // First, write current buffer contents to memory if valid
                 if (buffer_valid) begin
                     mem_wr_en <= 1'b1;
@@ -94,7 +80,7 @@ module store_buffer (
         end else begin
             // Pipeline is stalled - freeze buffer and disable writes
             mem_wr_en <= 1'b0;
-            // Keep buffer_valid, buffer_addr, buffer_data, buffer_byte_enable unchanged
+
         end
     end
 

@@ -1,6 +1,6 @@
 `default_nettype none
-// Include module for load-use hazard detection
-// This detects when an instruction immediately after a load is using the loaded value
+`include "instr_defines.vh"
+
 module load_use_detector (
     // Current instruction in ID stage
     input wire [4:0] rs1_id,
@@ -16,9 +16,6 @@ module load_use_detector (
     // Control signal output
     output reg stall_pipeline
 );
-
-    // Import instruction defines
-    `include "instr_defines.vh"
     
     // Detect if instruction in EX is a load
     wire is_load_in_ex;

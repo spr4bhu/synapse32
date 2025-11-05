@@ -208,12 +208,7 @@ module icache_nway_multiword #(
             end
         end
     end
-always @(posedge clk) begin
-    if (cpu_req && cpu_addr == 32'h1C) begin
-        $display("CACHE DEBUG: PC=0x1C requested, returning instruction 0x%08x", cpu_data);
-    end
-end
-    
+
     // BLOCK 2: Combinational Next State Logic
 
     always @(*) begin
@@ -227,7 +222,7 @@ end
             end
             
             FETCH: begin
-                // IMPROVED: Stay in FETCH until burst is complete
+                // Stay in FETCH until burst is complete
                 if (burst_complete) begin
                     next_state = ALLOCATE;
                 end
@@ -326,14 +321,6 @@ end
         end else begin
             cpu_data = 0;
             cpu_valid = 0;
-        end
-    end
-
-    // DEBUG: Track instruction fetch for Block 2
-    always @(*) begin
-        if (cpu_addr >= 32'hD0 && cpu_addr <= 32'hE4) begin
-            $display("[CACHE] @%t: PC=0x%h req_word=%d hit=%b data=0x%08x",
-                     $time, cpu_addr, req_word, hit, cpu_data);
         end
     end
 

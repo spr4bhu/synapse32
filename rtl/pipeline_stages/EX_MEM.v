@@ -4,7 +4,7 @@
 module EX_MEM (
     input wire clk,
     input wire rst,
-    input wire enable,                 // INDUSTRY STANDARD: Enable signal for stalls
+    input wire enable,                 // Enable signal for stalls
     input wire [4:0] rs1_addr_in,
     input wire [4:0] rs2_addr_in,
     input wire [4:0] rd_addr_in,
@@ -17,7 +17,7 @@ module EX_MEM (
     input wire [31:0] jump_addr_in,
     input wire [5:0] instr_id_in,
     input wire rd_valid_in,
-    input wire valid_in,               // NEW
+    input wire valid_in,
     output reg [4:0] rs1_addr_out,
     output reg [4:0] rs2_addr_out,
     output reg [4:0] rd_addr_out,
@@ -30,7 +30,7 @@ module EX_MEM (
     output reg [31:0] jump_addr_out,
     output reg [5:0] instr_id_out,
     output reg rd_valid_out,
-    output reg valid_out               // NEW
+    output reg valid_out
 );
 
 always @(posedge clk or posedge rst) begin
@@ -62,12 +62,6 @@ always @(posedge clk or posedge rst) begin
         instr_id_out <= instr_id_in;
         rd_valid_out <= rd_valid_in;
         valid_out <= valid_in;
-
-        // DEBUG: Track SW x8,16 (instr_id=27, rs2=8, addr should be base+16=0x10000010)
-        if (instr_id_in == 6'd27 && rs2_addr_in == 5'd8 && mem_addr_in[7:0] == 8'h10) begin
-            $display("[EX_MEM] @%t: SW x8,16 IN EX_MEM rs2_value=0x%h addr=0x%h valid_in=%b valid_out=%b enable=%b",
-                     $time, rs2_value_in, mem_addr_in, valid_in, valid_in, enable);
-        end
     end
     // else hold all values (stalled)
 end

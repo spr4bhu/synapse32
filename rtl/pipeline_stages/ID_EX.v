@@ -4,7 +4,7 @@
 module ID_EX(
     input wire clk,
     input wire rst,
-    input wire enable,                 // INDUSTRY STANDARD: Enable signal for stalls
+    input wire enable,                 // Enable signal for stalls
     input wire rs1_valid_in,
     input wire rs2_valid_in,
     input wire rd_valid_in,
@@ -52,7 +52,6 @@ always @(posedge clk or posedge rst) begin
         rs2_value_out <= 32'b0;
         valid_out <= 1'b0;
     end else if (flush || hazard_stall) begin
-        // Insert bubble for hazards - mark as invalid
         rs1_valid_out <= 1'b0;
         rs2_valid_out <= 1'b0;
         rd_valid_out <= 1'b0;
@@ -62,12 +61,11 @@ always @(posedge clk or posedge rst) begin
         rd_addr_out <= 5'b0;
         opcode_out <= 7'b0;
         instr_id_out <= 6'b0;
-        pc_out <= pc_in;  // Keep PC for flow tracking
+        pc_out <= pc_in;
         rs1_value_out <= 32'b0;
         rs2_value_out <= 32'b0;
         valid_out <= 1'b0;
     end else if (enable) begin
-        // Normal operation
         rs1_valid_out <= rs1_valid_in;
         rs2_valid_out <= rs2_valid_in;
         rd_valid_out <= rd_valid_in;
@@ -81,12 +79,6 @@ always @(posedge clk or posedge rst) begin
         rs1_value_out <= rs1_value_in;
         rs2_value_out <= rs2_value_in;
         valid_out <= valid_in;
-
-        // DEBUG: Track SW x8 instruction (instr_id 27 is INSTR_SW)
-        if (instr_id_in == 6'd27 && rs2_addr_in == 5'd8) begin
-            $display("[ID_EX] @%t: SW x8 IN ID_EX rs2_value=0x%h imm=%d addr=base+%d valid=%b enable=%b flush=%b hazard_stall=%b",
-                     $time, rs2_value_in, imm_in, imm_in, valid_in, enable, flush, hazard_stall);
-        end
     end
     // else hold all values (stalled)
 end

@@ -4,7 +4,7 @@
 module MEM_WB (
     input wire clk,
     input wire rst,
-    input wire enable,                 // INDUSTRY STANDARD: Enable signal for stalls
+    input wire enable,                 // Enable signal for stalls
     input wire [4:0] rs1_addr_in,
     input wire [4:0] rs2_addr_in,
     input wire [4:0] rd_addr_in,
@@ -54,7 +54,6 @@ always @(posedge clk or posedge rst) begin
         rd_valid_out <= 1'b0;
         valid_out <= 1'b0;
     end else if (enable) begin
-        // INDUSTRY STANDARD: Only update when enabled (not stalled)
         rs1_addr_out <= rs1_addr_in;
         rs2_addr_out <= rs2_addr_in;
         rd_addr_out <= rd_addr_in;
@@ -62,7 +61,7 @@ always @(posedge clk or posedge rst) begin
         rs2_value_out <= rs2_value_in;
         pc_out <= pc_in;
         mem_addr_out <= mem_addr_in;
-        mem_data_out <= mem_data_in;  // Store buffer already handles forwarding
+        mem_data_out <= mem_data_in;
         exec_output_out <= exec_output_in;
         jump_signal_out <= jump_signal_in;
         jump_addr_out <= jump_addr_in;

@@ -25,7 +25,6 @@ module top (
     wire [31:0] cpu_pc_out;
     wire [31:0] instr_to_cpu;
 
-    // TIMING FIX: Buffer instruction to ensure it's sampled after cache settles
     reg [31:0] instr_buffered;
     always @(*) begin
         instr_buffered = instr_to_cpu;
@@ -41,7 +40,6 @@ module top (
     wire [2:0] cpu_load_type;          // Load type
     wire [31:0] instr_read_data;
 
-    // NEW: I-Cache related wires
     wire cache_stall;               // Stall signal from I-cache to CPU
     wire cache_hit, cache_miss;     // Cache statistics
     
@@ -84,8 +82,6 @@ module top (
     // Select the appropriate address for memory access
     assign data_mem_addr = cpu_mem_write_en ? cpu_mem_write_addr : cpu_mem_read_addr;
 
-    // INDUSTRY STANDARD: Pass memory data directly to CPU
-    // Data memory is combinational, MEM_WB pipeline register handles sampling timing
     assign mem_read_data = timer_access ? timer_read_data :
                           data_mem_access ? data_mem_read_data :
                           uart_access ? uart_read_data :
@@ -157,9 +153,6 @@ module top (
         .mem_data(instr_to_burst_data)
     );
 
-    // INDUSTRY STANDARD: Pass memory data directly to CPU
-    // MEM_WB stage has enable signal to prevent sampling during stalls
-
     // Instantiate the RISC-V CPU core
     riscv_cpu cpu_inst (
         .clk(clk),
@@ -196,8 +189,6 @@ module top (
         .instr_p2(instr_read_data)
     );
 
-    // INDUSTRY STANDARD: Use combinational address (no registered delay)
-    // Synchronous memories handle address internally
     // Instantiate data memory
     data_mem #(
         .DATA_WIDTH(32),

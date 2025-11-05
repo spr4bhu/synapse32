@@ -24,11 +24,6 @@ initial begin
     `else
         $display("No instruction file specified, initializing memory with NOPs.");
     `endif
-    // Debug: Print first few instructions after loading
-    // $display("Instruction memory loaded - first few entries:");
-    // $display("  [0x00]: 0x%08h", instr_ram[0]);
-    // $display("  [0x04]: 0x%08h", instr_ram[1]);
-    // $display("  [0x08]: 0x%08h", instr_ram[2]);
 end
 `else
 initial begin

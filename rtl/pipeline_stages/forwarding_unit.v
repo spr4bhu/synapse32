@@ -57,14 +57,4 @@ module forwarding_unit (
         end
     end
 
-    // Debug output
-/*    always @(*) begin
-        if (rs1_valid_ex || rs2_valid_ex) begin
-            $display("FORWARD DEBUG: rs1_addr=%0d rs2_addr=%0d", rs1_addr_ex, rs2_addr_ex);
-            $display("  MEM: rd_addr=%0d valid=%0d instr_id=%0d", rd_addr_mem, rd_valid_mem, instr_id_mem);
-            $display("  WB:  rd_addr=%0d valid=%0d wr_en=%0d", rd_addr_wb, rd_valid_wb, wr_en_wb);
-            $display("  Result: forward_a=%0d forward_b=%0d", forward_a, forward_b);
-        end
-    end */
-
 endmodule
