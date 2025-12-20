@@ -1,4 +1,5 @@
 `default_nettype none
+`include "instr_defines.vh"
 module riscv_cpu (
     input wire clk,
     input wire rst,
@@ -16,7 +17,11 @@ module riscv_cpu (
     // Interrupt inputs
     input wire timer_interrupt,
     input wire software_interrupt,
-    input wire external_interrupt
+    input wire external_interrupt,
+    
+    // Instruction cache interface
+    input wire icache_stall,                     // Instruction cache miss stall
+    output wire fence_i_signal                   // FENCE.I invalidation signal
 );
 
     // Instantiate PC
@@ -24,6 +29,14 @@ module riscv_cpu (
     wire pc_inst0_j_signal;
     wire [31:0] pc_inst0_jump;
     wire stall_pipeline; // For load-use hazards
+    
+    // Combine all stall sources (load-use hazards + instruction cache stall)
+    wire combined_stall;
+    assign combined_stall = stall_pipeline || icache_stall;
+    
+    // FENCE.I detection - invalidate instruction cache
+    assign fence_i_signal = (id_ex_inst0_instr_id_out == INSTR_FENCE_I);
+    
     // Branch handling: use EX stage jump signal/address
     assign pc_inst0_j_signal = ex_inst0_jump_signal_out;
     assign pc_inst0_jump = ex_inst0_jump_addr_out;
@@ -32,7 +45,7 @@ module riscv_cpu (
         .rst(rst),
         .j_signal(pc_inst0_j_signal),
         .jump(pc_inst0_jump),
-        .stall(stall_pipeline), // Stall on load-use hazard
+        .stall(combined_stall), // Stall on load-use hazard or cache miss
         .out(pc_inst0_out)
     );
 
@@ -46,12 +59,18 @@ module riscv_cpu (
     wire branch_flush;
     assign branch_flush = ex_inst0_jump_signal_out; // Flush IF/ID if branch taken
     // If branch taken, flush IF/ID by setting instruction to 0 (NOP)
+    // IF_ID stall logic: 
+    // - On branch flush, we MUST latch the NOP (override cache stall)
+    // - Only stall if not flushing
+    wire if_id_stall;
+    assign if_id_stall = combined_stall && !branch_flush;
+    
     IF_ID if_id_inst0 (
         .clk(clk),
         .rst(rst),
         .pc_in(pc_inst0_out),
         .instruction_in(branch_flush ? 32'h13 : module_instr_in),
-        .stall(stall_pipeline), // Stall on load-use hazard
+        .stall(if_id_stall),
         .pc_out(if_id_pc_out),
         .instruction_out(if_id_instr_out)
     );
@@ -103,6 +122,7 @@ module riscv_cpu (
 
     registerfile rf_inst0 (
         .clk(clk),
+        .rst(rst),
         .rs1(decoder_inst0_rs1_out),
         .rs2(decoder_inst0_rs2_out),
         .rs1_valid(decoder_inst0_rs1_valid_out),
@@ -150,7 +170,7 @@ module riscv_cpu (
         .pc_in(if_id_pc_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
-        .stall(pipeline_flush || stall_pipeline), // Use combined flush
+        .stall(pipeline_flush || combined_stall), // Use combined flush with cache stall
         .rs1_valid_out(id_ex_inst0_rs1_valid_out),
         .rs2_valid_out(id_ex_inst0_rs2_valid_out),
         .rd_valid_out(id_ex_inst0_rd_valid_out),

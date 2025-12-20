@@ -31,6 +31,14 @@ module top (
     wire [2:0] cpu_load_type;          // Load type
     wire [31:0] instr_read_data;
     
+    // Instruction cache interface wires
+    wire [31:0] cache_mem_addr;
+    wire cache_mem_req;
+    wire [31:0] cache_mem_data;
+    wire cache_mem_valid;
+    wire icache_stall;
+    wire fence_i_signal;
+    
     // Timer module wires
     wire [31:0] timer_read_data;
     wire timer_valid;
@@ -84,19 +92,53 @@ module top (
         .module_read_addr(cpu_mem_read_addr),
         .module_write_addr(cpu_mem_write_addr),
         .module_write_byte_enable(cpu_write_byte_enable),
-        .module_load_type(cpu_load_type)
+        .module_load_type(cpu_load_type),
+        .icache_stall(icache_stall),
+        .fence_i_signal(fence_i_signal)
     );
 
-    // Instantiate instruction memory
+    // Instantiate instruction cache between CPU and instruction memory
+    // Configuration: 4-way set associative, 64 sets, 4 words per line = 4KB total
+    icache #(
+        .ADDR_WIDTH(32),
+        .DATA_WIDTH(32),
+        .NUM_WAYS(4),
+        .NUM_SETS(64),
+        .CACHE_LINE_WORDS(4)
+    ) icache_inst (
+        .clk(clk),
+        .rst(rst),
+        
+        // CPU interface
+        .cpu_addr(cpu_pc_out),
+        .cpu_req(1'b1),                    // Always requesting instructions
+        .cpu_data(instr_to_cpu),
+        .cpu_valid(),                       // Not needed - using stall instead
+        .cpu_stall(icache_stall),
+        
+        // Memory interface
+        .mem_addr(cache_mem_addr),
+        .mem_req(cache_mem_req),
+        .mem_data(cache_mem_data),
+        .mem_valid(cache_mem_valid),
+        
+        // Control
+        .invalidate(fence_i_signal)
+    );
+    
+    // Memory valid signal (instruction memory is combinatorial, always valid when requested)
+    assign cache_mem_valid = cache_mem_req;
+
+    // Instantiate instruction memory (now connected through cache for refills)
     instr_mem #(
         .DATA_WIDTH(32),
         .ADDR_WIDTH(32),
         .MEM_SIZE(131072)  // 512KB / 4 bytes = 128K words
     ) instr_mem_inst (
-        .instr_addr(cpu_pc_out),
+        .instr_addr(cache_mem_addr),        // Changed: Cache refill address
         .instr_addr_p2(data_mem_addr),
         .load_type(cpu_load_type),
-        .instr(instr_to_cpu),
+        .instr(cache_mem_data),             // Changed: Data to cache
         .instr_p2(instr_read_data)
     );
 
