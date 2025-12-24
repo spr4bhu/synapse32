@@ -93,15 +93,15 @@ async def test_shifts(dut):
 async def test_comparisons(dut):
     """Test comparisons operations"""
     # Set less than (signed)
-    await verify_alu_operation(dut, 10, 20, 0, 0x9, 0, 0xFFFFFFFF, "SLT true")
+    await verify_alu_operation(dut, 10, 20, 0, 0x9, 0, 0x00000001, "SLT true")
     await verify_alu_operation(dut, 20, 10, 0, 0x9, 0, 0, "SLT false")
-    await verify_alu_operation(dut, 0x80000000, 1, 0, 0x9, 0, 0xFFFFFFFF, "SLT negative < positive")
+    await verify_alu_operation(dut, 0x80000000, 1, 0, 0x9, 0, 0x00000001, "SLT negative < positive")
     await verify_alu_operation(dut, 0, 0x80000000, 0, 0x9, 0, 0, "SLT positive > negative")
-    
+
     # Set less than (unsigned)
-    await verify_alu_operation(dut, 10, 20, 0, 0xA, 0, 0xFFFFFFFF, "SLTU true")
+    await verify_alu_operation(dut, 10, 20, 0, 0xA, 0, 0x00000001, "SLTU true")
     await verify_alu_operation(dut, 20, 10, 0, 0xA, 0, 0, "SLTU false")
-    await verify_alu_operation(dut, 0, 1, 0, 0xA, 0, 0xFFFFFFFF, "SLTU zero < one")
+    await verify_alu_operation(dut, 0, 1, 0, 0xA, 0, 0x00000001, "SLTU zero < one")
     await verify_alu_operation(dut, 0x80000000, 1, 0, 0xA, 0, 0, "SLTU MSB high > low (unsigned)")
 
 @cocotb.test()
@@ -134,12 +134,12 @@ async def test_immediate_operations(dut):
     await verify_alu_operation(dut, 0x80000000, 0, 31, 0x11, 0, 0xFFFFFFFF, "SRAI max shift")
 
     # Set less than immediate (signed)
-    await verify_alu_operation(dut, 10, 0, 20, 0x12, 0, 0xFFFFFFFF, "SLTI true")
+    await verify_alu_operation(dut, 10, 0, 20, 0x12, 0, 0x00000001, "SLTI true")
     await verify_alu_operation(dut, 20, 0, 10, 0x12, 0, 0, "SLTI false")
-    await verify_alu_operation(dut, 0x80000000, 0, 0, 0x12, 0, 0xFFFFFFFF, "SLTI negative < zero")
-    
+    await verify_alu_operation(dut, 0x80000000, 0, 0, 0x12, 0, 0x00000001, "SLTI negative < zero")
+
     # Set less than immediate (unsigned)
-    await verify_alu_operation(dut, 10, 0, 20, 0x13, 0, 0xFFFFFFFF, "SLTIU true")
+    await verify_alu_operation(dut, 10, 0, 20, 0x13, 0, 0x00000001, "SLTIU true")
     await verify_alu_operation(dut, 20, 0, 10, 0x13, 0, 0, "SLTIU false")
     await verify_alu_operation(dut, 0x80000000, 0, 1, 0x13, 0, 0, "SLTIU MSB high > low (unsigned)")
 
@@ -182,9 +182,9 @@ async def test_random_inputs(dut):
         elif instr == 0x9:  # SLT
             rs1_signed = rs1 if rs1 < 0x80000000 else rs1 - 0x100000000
             rs2_signed = rs2 if rs2 < 0x80000000 else rs2 - 0x100000000
-            expected = 0xFFFFFFFF if rs1_signed < rs2_signed else 0
+            expected = 0x00000001 if rs1_signed < rs2_signed else 0
         elif instr == 0xA:  # SLTU
-            expected = 0xFFFFFFFF if rs1 < rs2 else 0
+            expected = 0x00000001 if rs1 < rs2 else 0
         elif instr == 0xB:  # ADDI
             expected = (rs1 + imm) & 0xFFFFFFFF
         elif instr == 0xC:  # XORI
@@ -203,9 +203,9 @@ async def test_random_inputs(dut):
         elif instr == 0x12:  # SLTI
             rs1_signed = rs1 if rs1 < 0x80000000 else rs1 - 0x100000000
             imm_signed = imm if imm < 0x80000000 else imm - 0x100000000
-            expected = 0xFFFFFFFF if rs1_signed < imm_signed else 0
+            expected = 0x00000001 if rs1_signed < imm_signed else 0
         elif instr == 0x13:  # SLTIU
-            expected = 0xFFFFFFFF if rs1 < imm else 0
+            expected = 0x00000001 if rs1 < imm else 0
             
         await verify_alu_operation(dut, rs1, rs2, imm, instr, pc_input, expected, f"Random test instr=0x{instr:x}")
 

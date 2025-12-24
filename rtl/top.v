@@ -29,7 +29,14 @@ module top (
     wire [31:0] data_mem_addr;
     wire [3:0] cpu_write_byte_enable;  // Write byte enables
     wire [2:0] cpu_load_type;          // Load type
-    wire [31:0] instr_read_data;
+    
+    // Instruction cache interface wires
+    wire [31:0] cache_mem_addr;
+    wire cache_mem_req;
+    wire [31:0] cache_mem_data;
+    wire cache_mem_valid;
+    wire icache_stall;
+    wire fence_i_signal;
     
     // Timer module wires
     wire [31:0] timer_read_data;
@@ -43,23 +50,24 @@ module top (
     
     // Memory address decoding using memory map
     wire data_mem_access;
-    wire timer_access;
     wire instr_mem_access;
-    
+    wire timer_access;
+
     // Use memory map macros for clean address decoding
     assign data_mem_access = `IS_DATA_MEM(data_mem_addr);
+    assign instr_mem_access = `IS_INSTR_MEM(data_mem_addr);
     assign timer_access = `IS_TIMER_MEM(data_mem_addr);
     assign uart_access = `IS_UART_MEM(data_mem_addr);
-    assign instr_mem_access = `IS_INSTR_MEM(data_mem_addr);
     
     // Select the appropriate address for memory access
     assign data_mem_addr = cpu_mem_write_en ? cpu_mem_write_addr : cpu_mem_read_addr;
     
     // Multiplex read data based on address
-    assign mem_read_data = timer_access ? timer_read_data : 
+    assign mem_read_data = timer_access ? timer_read_data :
                           data_mem_access ? data_mem_read_data :
+                          instr_mem_access ? data_mem_read_data :
                           uart_access ? uart_read_data :
-                            instr_mem_access ? instr_read_data : 32'h00000000;
+                          32'h00000000;
     
     // Debug outputs
     assign pc_debug = cpu_pc_out;
@@ -84,37 +92,70 @@ module top (
         .module_read_addr(cpu_mem_read_addr),
         .module_write_addr(cpu_mem_write_addr),
         .module_write_byte_enable(cpu_write_byte_enable),
-        .module_load_type(cpu_load_type)
+        .module_load_type(cpu_load_type),
+        .icache_stall(icache_stall),
+        .fence_i_signal(fence_i_signal)
     );
 
-    // Instantiate instruction memory
-    instr_mem #(
-        .DATA_WIDTH(32),
+    icache #(
         .ADDR_WIDTH(32),
-        .MEM_SIZE(131072)  // 512KB / 4 bytes = 128K words
-    ) instr_mem_inst (
-        .instr_addr(cpu_pc_out),
-        .instr_addr_p2(data_mem_addr),
-        .load_type(cpu_load_type),
-        .instr(instr_to_cpu),
-        .instr_p2(instr_read_data)
-    );
-
-    // Instantiate data memory  
-    data_mem #(
         .DATA_WIDTH(32),
-        .ADDR_WIDTH(32),
-        .MEM_SIZE(1048576)  // 1MB in bytes
-    ) data_mem_inst (
+        .NUM_WAYS(4),
+        .NUM_SETS(64),
+        .CACHE_LINE_WORDS(4)
+    ) icache_inst (
         .clk(clk),
-        .wr_en(cpu_mem_write_en && data_mem_access),
-        .rd_en(cpu_mem_read_en && data_mem_access),
-        .write_byte_enable(cpu_write_byte_enable),
-        .load_type(cpu_load_type),
-        .addr(data_mem_addr - `DATA_MEM_BASE),
-        .wr_data(cpu_mem_write_data),
-        .rd_data_out(data_mem_read_data)
+        .rst(rst),
+        .cpu_addr(cpu_pc_out),
+        .cpu_req(!rst),
+        .cpu_data(instr_to_cpu),
+        .cpu_valid(),
+        .cpu_stall(icache_stall),
+        .mem_addr(cache_mem_addr),
+        .mem_req(cache_mem_req),
+        .mem_data(cache_mem_data),
+        .mem_valid(cache_mem_valid),
+        .invalidate(fence_i_signal)
     );
+
+    assign cache_mem_valid = cache_mem_req;
+
+    wire [31:0] unified_memory_data_out;
+
+    // Unified memory address and control signals
+    wire [31:0] instr_addr;
+    wire [31:0] data_addr;
+    wire        data_we;
+    wire        data_re;
+
+    // Instruction and Data port
+    assign instr_addr = cache_mem_addr;
+    assign data_addr = instr_mem_access ? (data_mem_addr - `INSTR_MEM_BASE) :
+                                          (data_mem_addr - `DATA_MEM_BASE + `INSTR_MEM_SIZE);
+
+    // Data port enables
+    assign data_we = cpu_mem_write_en && data_mem_access;
+    assign data_re = cpu_mem_read_en && (data_mem_access || instr_mem_access);
+
+    unified_memory #(
+        .ADDR_WIDTH(32),
+        .DATA_WIDTH(32),
+        .MEM_SIZE(2097152)  // 2 MB total (1 MB instructions + 1 MB data)
+    ) unified_memory_inst (
+        .clk(clk),
+        .addr_instr(instr_addr),
+        .instr_out(cache_mem_data),
+        .addr_data(data_addr),
+        .write_data(cpu_mem_write_data),
+        .read_data(unified_memory_data_out),
+        .write_enable(data_we),
+        .byte_enable(cpu_write_byte_enable),
+        .read_enable(data_re),
+        .load_type(cpu_load_type)
+    );
+
+    // Connect unified memory read data to CPU read path
+    assign data_mem_read_data = unified_memory_data_out;
     
     // Instantiate timer module
     timer timer_inst (

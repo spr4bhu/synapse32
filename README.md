@@ -42,10 +42,23 @@ The CPU implements several techniques to handle pipeline hazards:
    - Detects when an instruction immediately needs data from a preceding load
    - Inserts pipeline stalls when necessary
 
-3. **Control Hazard Management**:
+3. **Store-Load Forwarding**:
+   - Detects when a load reads from the same address as a preceding store
+   - Forwards store data directly to the load, bypassing memory
+   - Ensures memory consistency without stalls
+
+4. **Control Hazard Management**:
    - Handles branch and jump instructions
    - Flushes the pipeline when branches are taken
    - Supports efficient control flow
+
+### Instruction Cache
+
+The CPU includes an N-way set-associative instruction cache:
+
+- **Configuration**: 4-way set-associative, 64 sets, 4 words per line (4KB total)
+- **Replacement Policy**: Round-robin
+- **Cache Invalidation**: FENCE.I instruction support
 
 ## Running Code on the CPU
 
@@ -111,6 +124,8 @@ The regression tests include:
 - **Hazard Handling Tests**: Ensures that data forwarding and hazard detection work correctly.
 - **Control Flow Tests**: Validates branch and jump instructions.
 - **Memory Access Tests**: Checks load and store operations.
+- **Memory Hazard Tests**: Validates store-load hazard detection and forwarding.
+- **Instruction Cache Tests**: Validates cache hit/miss, line fetching, invalidation, and replacement policy.
 - **CSR Tests**: Validates the control and status register operations.
 - **UART Tests**: Validates the UART communication functionality.
 

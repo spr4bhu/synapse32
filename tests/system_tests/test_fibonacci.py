@@ -51,7 +51,7 @@ def compile_fibonacci():
     try:
         # Create .o file from C source
         subprocess.run([
-            "riscv64-unknown-elf-gcc",
+            "riscv-unknown-elf-gcc",
             "-march=rv32i",
             "-mabi=ilp32",
             "-nostdlib",
@@ -67,7 +67,7 @@ def compile_fibonacci():
         
         # Create .o file from start.S
         subprocess.run([
-            "riscv64-unknown-elf-gcc",
+            "riscv-unknown-elf-gcc",
             "-march=rv32i",
             "-mabi=ilp32",
             "-nostdlib",
@@ -83,7 +83,7 @@ def compile_fibonacci():
 
         # Link object files to create ELF binary
         subprocess.run([
-            "riscv64-unknown-elf-gcc",
+            "riscv-unknown-elf-gcc",
             "-march=rv32i",
             "-mabi=ilp32",
             "-nostdlib",
@@ -98,7 +98,7 @@ def compile_fibonacci():
         
         # Convert ELF to binary
         subprocess.run([
-            "riscv64-unknown-elf-objcopy",
+            "riscv-unknown-elf-objcopy",
             "-O", "binary",
             str(elf_file),
             str(bin_file)
@@ -115,7 +115,7 @@ def compile_fibonacci():
         
         # Convert binary to Verilog hex format
         subprocess.run([
-            "riscv64-unknown-elf-objcopy",
+            "riscv-unknown-elf-objcopy",
             "-I", "binary",
             "-O", "verilog",
             "--verilog-data-width=4",
@@ -126,7 +126,7 @@ def compile_fibonacci():
                     
         # Generate LSS file for debugging
         subprocess.run([
-            "riscv64-unknown-elf-objdump",
+            "riscv-unknown-elf-objdump",
             "-D",
             "--visualize-jumps",
             "-t",
