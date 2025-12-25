@@ -51,6 +51,7 @@ module icache #(
     reg [ADDR_WIDTH-1:0] saved_addr;
     reg [TAG_BITS-1:0] saved_tag;
     reg [INDEX_BITS-1:0] saved_index;
+    reg [OFFSET_BITS-1:0] saved_word_offset;
 
     // Address field extraction
     wire [OFFSET_BITS-1:0] word_offset = cpu_addr[OFFSET_BITS+1:2];
@@ -110,6 +111,7 @@ module icache #(
             saved_tag <= 0;
             saved_index <= 0;
             saved_addr <= 0;
+            saved_word_offset <= 0;
             victim_way <= 0;
             refill_count <= 0;
 
@@ -138,6 +140,7 @@ module icache #(
                         saved_tag <= tag;
                         saved_index <= set_index;
                         saved_addr <= block_addr;
+                        saved_word_offset <= word_offset;
                         victim_way <= selected_victim;
                         refill_count <= 0;
                     end
@@ -207,7 +210,7 @@ module icache #(
             end
 
             ALLOCATE: begin
-                cpu_data = data[saved_index][victim_way][saved_addr[OFFSET_BITS+1:2]];
+                cpu_data = data[saved_index][victim_way][saved_word_offset];
                 cpu_valid = 1'b1;
                 cpu_stall = 1'b0;
             end
