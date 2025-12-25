@@ -27,7 +27,6 @@ module icache #(
     input wire invalidate
 );
 
-    // Parameter calculations
     localparam OFFSET_BITS = $clog2(CACHE_LINE_WORDS);
     localparam INDEX_BITS = $clog2(NUM_SETS);
     localparam TAG_BITS = ADDR_WIDTH - INDEX_BITS - OFFSET_BITS - 2;
@@ -51,13 +50,11 @@ module icache #(
     reg [ADDR_WIDTH-1:0] saved_addr;
     reg [TAG_BITS-1:0] saved_tag;
     reg [INDEX_BITS-1:0] saved_index;
-    reg [OFFSET_BITS-1:0] saved_word_offset;
 
     // Address field extraction
     wire [OFFSET_BITS-1:0] word_offset = cpu_addr[OFFSET_BITS+1:2];
     wire [INDEX_BITS-1:0] set_index = cpu_addr[INDEX_BITS+OFFSET_BITS+1:OFFSET_BITS+2];
     wire [TAG_BITS-1:0] tag = cpu_addr[ADDR_WIDTH-1:INDEX_BITS+OFFSET_BITS+2];
-    wire [ADDR_WIDTH-1:0] block_addr = {cpu_addr[ADDR_WIDTH-1:OFFSET_BITS+2], {OFFSET_BITS+2{1'b0}}};
 
     // Hit detection
     reg [NUM_WAYS-1:0] way_hit;
@@ -111,7 +108,6 @@ module icache #(
             saved_tag <= 0;
             saved_index <= 0;
             saved_addr <= 0;
-            saved_word_offset <= 0;
             victim_way <= 0;
             refill_count <= 0;
 
@@ -137,10 +133,9 @@ module icache #(
                 IDLE: begin
                     if (cpu_req && !cache_hit) begin
                         state <= FETCH;
+                        saved_addr <= cpu_addr;
                         saved_tag <= tag;
                         saved_index <= set_index;
-                        saved_addr <= block_addr;
-                        saved_word_offset <= word_offset;
                         victim_way <= selected_victim;
                         refill_count <= 0;
                     end
@@ -169,7 +164,20 @@ module icache #(
                         end
                     end
 
-                    state <= IDLE;
+                    // Check if address changed during miss (branch/jump)
+                    if (cpu_addr == saved_addr) begin
+                        state <= IDLE;
+                    end else if (cache_hit) begin
+                        state <= IDLE;
+                    end else begin
+                        // New address misses - start new refill
+                        state <= FETCH;
+                        saved_addr <= cpu_addr;
+                        saved_tag <= tag;
+                        saved_index <= set_index;
+                        victim_way <= selected_victim;
+                        refill_count <= 0;
+                    end
                 end
 
                 default: begin
@@ -198,7 +206,7 @@ module icache #(
                         cpu_stall = 1'b1;
                         cpu_valid = 1'b0;
                         mem_req = 1'b1;
-                        mem_addr = block_addr;
+                        mem_addr = {cpu_addr[ADDR_WIDTH-1:OFFSET_BITS+2], {OFFSET_BITS{1'b0}}, 2'b00};
                     end
                 end
             end
@@ -210,9 +218,22 @@ module icache #(
             end
 
             ALLOCATE: begin
-                cpu_data = data[saved_index][victim_way][saved_word_offset];
-                cpu_valid = 1'b1;
-                cpu_stall = 1'b0;
+                // Check if address matches saved address
+                if (cpu_addr == saved_addr) begin
+                    cpu_data = data[saved_index][victim_way][saved_addr[OFFSET_BITS+1:2]];
+                    cpu_valid = 1'b1;
+                    cpu_stall = 1'b0;
+                end else begin
+                    // Address changed - check if new address hits
+                    if (cache_hit) begin
+                        cpu_data = data[set_index][hit_way][word_offset];
+                        cpu_valid = 1'b1;
+                        cpu_stall = 1'b0;
+                    end else begin
+                        cpu_stall = 1'b1;
+                        cpu_valid = 1'b0;
+                    end
+                end
             end
 
             default: begin
@@ -222,3 +243,5 @@ module icache #(
     end
 
 endmodule
+
+`default_nettype wire
