@@ -65,9 +65,15 @@ async def test_basic_read_miss(dut):
 
     await FallingEdge(dut.clk)
     dut.mem_resp_valid.value = 1
-    dut.mem_resp_rdata.value = 0xDEADBEEF
+    # Provide full 512-bit cache line (64 bytes = 16 words)
+    # Word 0 (offset 0x0) = 0xDEADBEEF
+    refill_data = 0xDEADBEEF << (0 * 32)  # Word 0
+    dut.mem_resp_rdata.value = refill_data
 
     await RisingEdge(dut.clk)
+    # State transitions to UPDATE_CACHE on this rising edge
+    # Output logic evaluates combinational, but we need to wait for state to be stable
+    await RisingEdge(dut.clk)  # Wait for UPDATE_CACHE state to be active
     assert dut.cpu_resp_valid.value == 1, "Response should be valid"
     assert dut.cpu_resp_rdata.value == 0xDEADBEEF, \
         f"Should get refill data, got {hex(dut.cpu_resp_rdata.value)}"
@@ -214,6 +220,7 @@ async def test_secondary_miss_coalesce(dut):
     await FallingEdge(dut.clk)
     dut.mem_resp_valid.value = 1
     # Create test data where word 0 = 0x1111, word 4 = 0x2222
+    # Provide full 512-bit cache line (64 bytes = 16 words)
     refill_data = 0
     for i in range(16):
         if i == 0:
@@ -225,6 +232,8 @@ async def test_secondary_miss_coalesce(dut):
     dut.mem_resp_rdata.value = refill_data
 
     await RisingEdge(dut.clk)
+    # State transitions to UPDATE_CACHE on this rising edge
+    await RisingEdge(dut.clk)  # Wait for UPDATE_CACHE state to be active
 
     # First request (word 0) gets response
     assert dut.cpu_resp_valid.value == 1, "Should respond to first request"
@@ -234,19 +243,21 @@ async def test_secondary_miss_coalesce(dut):
     dut.mem_resp_valid.value = 0
 
     # Second request should be served from cache (now that line is filled)
+    # Wait for cache to return to IDLE after UPDATE_CACHE
     await RisingEdge(dut.clk)
+    
     dut.cpu_req_valid.value = 1
     dut.cpu_req_addr.value = 0x1010
     dut.cpu_req_write.value = 0
     dut.cpu_req_byte_en.value = 0xF
 
     await RisingEdge(dut.clk)
-    dut.cpu_req_valid.value = 0
-
-    await RisingEdge(dut.clk)
+    # Hit should be served immediately (combinational in IDLE state)
     assert dut.cpu_resp_valid.value == 1, "Second request should hit"
     assert dut.cpu_resp_rdata.value == 0x2222, \
         f"Should get word 4 data 0x2222, got {hex(dut.cpu_resp_rdata.value)}"
+    
+    dut.cpu_req_valid.value = 0
 
     cocotb.log.info("✓ Secondary miss coalesce test PASSED")
 
@@ -320,7 +331,8 @@ async def test_write_during_refill(dut):
 
     await RisingEdge(dut.clk)
 
-    # Should serve write hit
+    # Write hits assert cpu_resp_valid (Level 3: write hits during refill)
+    # The write is accepted and processed, response valid indicates completion
     assert dut.cpu_resp_valid.value == 1, "Should respond to write hit"
 
     dut.cpu_req_valid.value = 0
@@ -328,26 +340,34 @@ async def test_write_during_refill(dut):
     # Complete refill
     await FallingEdge(dut.clk)
     dut.mem_resp_valid.value = 1
-    dut.mem_resp_rdata.value = 0xDEADBEEF
+    # Provide full 512-bit cache line (64 bytes = 16 words)
+    # Word 0 (offset 0x0) = 0xDEADBEEF
+    refill_data = 0xDEADBEEF << (0 * 32)  # Word 0
+    dut.mem_resp_rdata.value = refill_data
 
     await RisingEdge(dut.clk)
+    # State transitions to UPDATE_CACHE on this rising edge
+    await RisingEdge(dut.clk)  # Wait for UPDATE_CACHE state to be active
     dut.mem_resp_valid.value = 0
 
     await RisingEdge(dut.clk)
 
     # Step 4: Read back 0x2000 to verify write
+    # Wait for cache to return to IDLE after UPDATE_CACHE completes
+    await RisingEdge(dut.clk)
+    
     dut.cpu_req_valid.value = 1
     dut.cpu_req_addr.value = 0x2000
     dut.cpu_req_write.value = 0
     dut.cpu_req_byte_en.value = 0xF
 
     await RisingEdge(dut.clk)
-    dut.cpu_req_valid.value = 0
-
-    await RisingEdge(dut.clk)
+    # Hit should be served immediately (combinational in IDLE state)
     assert dut.cpu_resp_valid.value == 1, "Read should hit"
     assert dut.cpu_resp_rdata.value == 0x9999, \
         f"Should read written value 0x9999, got {hex(dut.cpu_resp_rdata.value)}"
+    
+    dut.cpu_req_valid.value = 0
 
     cocotb.log.info("✓ Write during refill test PASSED")
 
@@ -400,7 +420,10 @@ async def test_multiple_outstanding_misses(dut):
     # Complete first refill
     await FallingEdge(dut.clk)
     dut.mem_resp_valid.value = 1
-    dut.mem_resp_rdata.value = 0x1111
+    # Provide full 512-bit cache line (64 bytes = 16 words)
+    # Word 0 (offset 0x0) = 0x1111
+    refill_data = 0x1111 << (0 * 32)  # Word 0
+    dut.mem_resp_rdata.value = refill_data
 
     await RisingEdge(dut.clk)
     dut.mem_resp_valid.value = 0
