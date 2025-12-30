@@ -220,22 +220,31 @@ async def test_mshr_full_stall(dut):
     mshr_valid_count = bin(int(dut.mshr_valid.value)).count('1')
     assert mshr_valid_count == 1, f"Should have 1 MSHR allocated, got {mshr_valid_count}"
 
-    # Cache is now in READ_MEM state (blocking), so it won't accept new requests
-    # This is Level 1 behavior - blocking operation
-    # Try to issue another miss (should be rejected because cache is busy)
+    # Cache is now in READ_MEM state
+    # Level 3: Cache is non-blocking, so it can accept new requests during refill
+    # However, misses can only be accepted if MSHRs are available or coalescing is possible
+    # Try to issue another miss (different address, so no coalescing)
+    # Should be accepted if MSHR available (Level 3 non-blocking behavior)
     dut.cpu_req_valid.value = 1
-    dut.cpu_req_addr.value = 0x2000
+    dut.cpu_req_addr.value = 0x2000  # Different address, no coalescing
     dut.cpu_req_write.value = 0
     dut.cpu_req_byte_en.value = 0xF
 
     await RisingEdge(dut.clk)
 
-    # Should not be ready (cache is busy with refill)
-    assert dut.cpu_req_ready.value == 0, "Should stall when cache is busy (Level 1 blocking)"
+    # Level 3: Cache accepts misses during refill if MSHR available
+    # Since we only have 1 MSHR allocated, there are 7 free, so request should be accepted
+    # (This test verifies non-blocking behavior - cache accepts requests during refill)
+    assert dut.cpu_req_ready.value == 1, "Level 3: Should accept request during refill if MSHR available (non-blocking)"
 
     dut.cpu_req_valid.value = 0
 
-    cocotb.log.info("✓ MSHR full stall test PASSED (Level 1 blocking behavior)")
+    # Verify second MSHR was allocated (Level 3 non-blocking)
+    await RisingEdge(dut.clk)
+    mshr_valid_count_after = bin(int(dut.mshr_valid.value)).count('1')
+    assert mshr_valid_count_after == 2, f"Level 3: Should have 2 MSHRs allocated (non-blocking), got {mshr_valid_count_after}"
+    
+    cocotb.log.info("✓ MSHR non-blocking test PASSED (Level 3: accepts requests during refill)")
 
 
 def runCocotbTests():

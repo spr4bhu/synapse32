@@ -18,7 +18,7 @@
 // - Pseudo-LRU replacement (3-bit tree per set for 4-way)
 // - Byte-level write support via byte enables
 // - Write-allocate policy for write misses
-// - MSHR support for tracking outstanding misses (Level 1: basic tracking)
+// - MSHR support for tracking outstanding misses (Level 3: basic tracking + request coalescing + hit-during-refill)
 // - RISC-V compliant (supports LB/LH/LW/LBU/LHU, SB/SH/SW)
 //
 // Industry Standard Configuration:
@@ -79,7 +79,15 @@ module dcache_mshr #(
     // ========================================================================
     output wire [31:0]              stat_hits,         // Number of cache hits
     output wire [31:0]              stat_misses,       // Number of cache misses
-    output wire [31:0]              stat_evictions      // Number of evictions
+    output wire [31:0]              stat_evictions,    // Number of evictions
+    
+    // ========================================================================
+    // MSHR Status (for testing/debugging)
+    // ========================================================================
+    output wire                     mshr_full,         // All MSHRs allocated
+    output wire [NUM_MSHR-1:0]      mshr_valid,        // Which MSHRs are valid
+    output wire [(NUM_MSHR*ADDR_WIDTH)-1:0]         mshr_addr_flat,      // MSHR addresses (flattened)
+    output wire [(NUM_MSHR*((LINE_SIZE / (DATA_WIDTH/8))))-1:0] mshr_word_mask_flat  // MSHR word masks (flattened)
 );
 
     // ========================================================================
@@ -228,7 +236,7 @@ module dcache_mshr #(
     reg [WAY_INDEX_BITS-1:0]     flush_way;         // Current way being flushed
     
     // ========================================================================
-    // MSHR Integration (Level 1: Basic MSHR Tracking)
+    // MSHR Integration (Level 2: Basic Tracking + Request Coalescing)
     // ========================================================================
     // Track which MSHR is currently being serviced (active refill)
     reg active_mshr_valid;                          // Active MSHR valid flag
@@ -250,8 +258,9 @@ module dcache_mshr #(
     wire mshr_retire_req;                            // Request to retire MSHR
     wire [MSHR_BITS-1:0] mshr_retire_id;            // ID of MSHR to retire
     
-    wire mshr_full;                                  // All MSHRs allocated
-    wire [NUM_MSHR-1:0] mshr_valid;                  // Which MSHRs are valid
+    // MSHR status signals (declared as output ports, connected internally)
+    wire [(NUM_MSHR*ADDR_WIDTH)-1:0] mshr_addr_flat_internal;      // MSHR addresses (flattened, internal)
+    wire [(NUM_MSHR*WORDS_PER_LINE)-1:0] mshr_word_mask_flat_internal;  // MSHR word masks (flattened, internal)
     
     // ========================================================================
     // Data Read/Write Logic
@@ -297,16 +306,23 @@ module dcache_mshr #(
         .retire_id(mshr_retire_id),
         .mshr_full(mshr_full),
         .mshr_valid(mshr_valid),
-        .mshr_addr_flat(),                           // Not used in Level 1
-        .mshr_word_mask_flat()                       // Not used in Level 1
+        .mshr_addr_flat(mshr_addr_flat_internal),            // Level 2: Internal connection
+        .mshr_word_mask_flat(mshr_word_mask_flat_internal)   // Level 2: Internal connection
     );
+    
+    // ========================================================================
+    // MSHR Status Outputs (for testing/debugging)
+    // ========================================================================
+    assign mshr_addr_flat = mshr_addr_flat_internal;
+    assign mshr_word_mask_flat = mshr_word_mask_flat_internal;
     
     // ========================================================================
     // MSHR Control Signals (Level 1: Basic Tracking)
     // ========================================================================
-    // Allocate MSHR on cache miss (in IDLE state)
-    assign mshr_alloc_req = (state == STATE_IDLE) && cpu_req_valid &&
-                            !cache_hit && mshr_alloc_ready;
+    // Allocate MSHR on cache miss
+    // Level 3: Allocate in all states (non-blocking operation)
+    // Only allocate if no match found (coalescing takes priority)
+    assign mshr_alloc_req = cpu_req_valid && !cache_hit && !mshr_match_hit && mshr_alloc_ready;
     assign mshr_alloc_addr = cpu_req_addr;
     assign mshr_alloc_word_offset = cpu_req_addr[WORD_OFFSET_BITS+BYTE_OFFSET_BITS-1:BYTE_OFFSET_BITS];
     
@@ -314,10 +330,16 @@ module dcache_mshr #(
     assign mshr_retire_req = (state == STATE_UPDATE_CACHE);
     assign mshr_retire_id = active_mshr_id;
     
-    // Match interface not used in Level 1 (blocking operation, no coalescing yet)
-    assign mshr_match_req = 1'b0;
-    assign mshr_match_addr = {ADDR_WIDTH{1'b0}};
-    assign mshr_match_word_offset = {WORD_OFFSET_BITS{1'b0}};
+    // ========================================================================
+    // MSHR Match Interface (Level 3: Request Coalescing + Hit-During-Refill)
+    // ========================================================================
+    // Check if a cache miss matches an existing MSHR (same cache line)
+    // If match found, coalesce request into existing MSHR instead of allocating new one
+    // Level 3: Check match in all states (IDLE, WRITE_MEM, READ_MEM, UPDATE_CACHE)
+    // This enables coalescing during refill (non-blocking operation)
+    assign mshr_match_req = cpu_req_valid && !cache_hit;
+    assign mshr_match_addr = cpu_req_addr;
+    assign mshr_match_word_offset = cpu_req_addr[WORD_OFFSET_BITS+BYTE_OFFSET_BITS-1:BYTE_OFFSET_BITS];
     
     // ========================================================================
     // Active MSHR Tracking
@@ -373,10 +395,16 @@ module dcache_mshr #(
                 else if (read_write_enable && hit) begin
                     next_state = STATE_IDLE;
                 end
-                // Cache Miss: Check MSHR availability, then proceed
+                // Cache Miss: Check MSHR for coalescing, then allocate if needed
                 else if (read_write_enable && !hit) begin
-                    if (mshr_alloc_ready) begin
-                        // MSHR available - allocate and proceed
+                    if (mshr_match_hit) begin
+                        // Level 2: Match found - coalesce request, stay in IDLE
+                        // Word mask updated by MSHR module, no refill needed yet
+                        // (Refill is already in progress for the matched MSHR)
+                        next_state = STATE_IDLE;
+                    end else if (mshr_alloc_ready) begin
+                        // No match - allocate new MSHR and proceed with refill
+                        // Level 2: Start refill immediately (coalescing happens before allocation)
                         if (dirty_victim) begin
                             next_state = STATE_WRITE_MEM;
                         end else begin
@@ -391,20 +419,29 @@ module dcache_mshr #(
             
             STATE_WRITE_MEM: begin
                 // Wait for memory to finish write-back (MEM_BUSYWAIT=0 means ready)
+                // Level 3: Can accept new requests during write-back (non-blocking)
                 if (!mem_busywait) begin
                     next_state = STATE_READ_MEM;
+                end else begin
+                    // Still waiting for write-back, but can accept new requests
+                    next_state = STATE_WRITE_MEM;
                 end
             end
             
             STATE_READ_MEM: begin
                 // Wait for memory to finish fetch (MEM_BUSYWAIT=0 means ready)
+                // Level 3: Can accept new requests during fetch (non-blocking)
                 if (!mem_busywait && mem_resp_valid) begin
                     next_state = STATE_UPDATE_CACHE;
+                end else begin
+                    // Still waiting for fetch, but can accept new requests
+                    next_state = STATE_READ_MEM;
                 end
             end
             
             STATE_UPDATE_CACHE: begin
                 // Update cache and return to IDLE (single cycle)
+                // Level 3: Can accept new requests during cache update
                 next_state = STATE_IDLE;
             end
         endcase
@@ -534,19 +571,38 @@ module dcache_mshr #(
                             dirty[req_set][hit_way_idx] <= 1'b1;
                         end
                     end else begin
-                        // Cache miss: allocate MSHR, save request info, and transition
+                        // Cache miss: check for coalescing, then allocate if needed
                         `ifdef COCOTB_SIM
-                        $display("[DCACHE_MSHR] IDLE: MISS - Saving request - cpu_req_addr=0x%08x, write=%d", 
+                        $display("[DCACHE_MSHR] IDLE: MISS - cpu_req_addr=0x%08x, write=%d", 
                                  cpu_req_addr, cpu_req_write);
-                        $display("[DCACHE_MSHR]   Address breakdown: addr[31:14]=0x%x, addr[13:6]=%d, addr[5:2]=%d", 
-                                 cpu_req_addr[31:14], cpu_req_addr[13:6], cpu_req_addr[5:2]);
-                        $display("[DCACHE_MSHR]   Calculated: req_set=%d, req_tag=0x%x, victim_way=%d, dirty_victim=%d", 
-                                 req_set, req_tag, pre_victim_way, dirty_victim);
-                        $display("[DCACHE_MSHR]   MSHR alloc_ready=%d, alloc_id=%d", mshr_alloc_ready, mshr_alloc_id);
+                        $display("[DCACHE_MSHR]   MSHR match_hit=%d, match_id=%d, alloc_ready=%d", 
+                                 mshr_match_hit, mshr_match_id, mshr_alloc_ready);
                         `endif
                         
-                        // Check MSHR availability (from combinational logic)
-                        if (mshr_alloc_ready) begin
+                        // Level 2: Check for coalescing first
+                        if (mshr_match_hit) begin
+                            // Match found - coalesce request into existing MSHR
+                            // MSHR module updates word mask automatically
+                            // Stay in IDLE (no refill needed, already in progress)
+                            `ifdef COCOTB_SIM
+                            $display("[DCACHE_MSHR] IDLE: MISS coalesced into MSHR %d", mshr_match_id);
+                            `endif
+                            // Don't save request info (coalesced request doesn't need its own state)
+                            // Don't allocate new MSHR
+                            // Stay in IDLE - refill will serve all coalesced requests when complete
+                            state <= next_state;  // next_state is IDLE for coalescing
+                        end else if (mshr_alloc_ready) begin
+                            // No match - allocate new MSHR and start refill
+                            `ifdef COCOTB_SIM
+                            $display("[DCACHE_MSHR] IDLE: MISS - Allocating new MSHR - cpu_req_addr=0x%08x, write=%d", 
+                                     cpu_req_addr, cpu_req_write);
+                            $display("[DCACHE_MSHR]   Address breakdown: addr[31:14]=0x%x, addr[13:6]=%d, addr[5:2]=%d", 
+                                     cpu_req_addr[31:14], cpu_req_addr[13:6], cpu_req_addr[5:2]);
+                            $display("[DCACHE_MSHR]   Calculated: req_set=%d, req_tag=0x%x, victim_way=%d, dirty_victim=%d", 
+                                     req_set, req_tag, pre_victim_way, dirty_victim);
+                            $display("[DCACHE_MSHR]   MSHR alloc_id=%d", mshr_alloc_id);
+                            `endif
+                            
                             // MSHR available - allocate (happens via mshr_alloc_req signal)
                             // active_mshr_id captured in separate always block
                             saved_addr <= cpu_req_addr;
@@ -573,6 +629,21 @@ module dcache_mshr #(
                 
                 STATE_WRITE_MEM: begin
                     // Write-back in progress, wait for completion
+                    // Level 3: Handle hits during write-back
+                    if (cpu_req_valid && !flush_req && cpu_cache_hit) begin
+                        if (cpu_req_write) begin
+                            // Write hit during write-back: update cache
+                            data[cpu_req_set][cpu_hit_way] <= merge_write_data(
+                                data[cpu_req_set][cpu_hit_way],
+                                cpu_req_wdata,
+                                cpu_req_addr[WORD_OFFSET_BITS+BYTE_OFFSET_BITS-1:BYTE_OFFSET_BITS],
+                                cpu_req_byte_en
+                            );
+                            dirty[cpu_req_set][cpu_hit_way] <= 1'b1;
+                            lru_state[cpu_req_set] <= update_lru(lru_state[cpu_req_set], cpu_hit_way);
+                        end
+                        // Read hits handled in output logic
+                    end
                     // State transition handled by combinational logic (next_state)
                     // Follow next_state (set by combinational logic)
                     state <= next_state;
@@ -580,6 +651,21 @@ module dcache_mshr #(
                 
                 STATE_READ_MEM: begin
                     // Fetch in progress, wait for completion
+                    // Level 3: Handle hits during fetch
+                    if (cpu_req_valid && !flush_req && cpu_cache_hit) begin
+                        if (cpu_req_write) begin
+                            // Write hit during fetch: update cache
+                            data[cpu_req_set][cpu_hit_way] <= merge_write_data(
+                                data[cpu_req_set][cpu_hit_way],
+                                cpu_req_wdata,
+                                cpu_req_addr[WORD_OFFSET_BITS+BYTE_OFFSET_BITS-1:BYTE_OFFSET_BITS],
+                                cpu_req_byte_en
+                            );
+                            dirty[cpu_req_set][cpu_hit_way] <= 1'b1;
+                            lru_state[cpu_req_set] <= update_lru(lru_state[cpu_req_set], cpu_hit_way);
+                        end
+                        // Read hits handled in output logic
+                    end
                     // State transition handled by combinational logic (next_state)
                     `ifdef COCOTB_SIM
                     $display("[DCACHE] READ_MEM: mem_busywait=%d, mem_resp_valid=%d, saved_set=%d, saved_tag=0x%x", 
@@ -599,6 +685,23 @@ module dcache_mshr #(
                     $display("[DCACHE_MSHR] UPDATE_CACHE: Retiring MSHR %d (active_mshr_valid=%d)", 
                              active_mshr_id, active_mshr_valid);
                     `endif
+                    
+                    // Level 3: Handle hits during cache update
+                    if (cpu_req_valid && !flush_req && cpu_cache_hit) begin
+                        if (cpu_req_write) begin
+                            // Write hit during update: update cache
+                            data[cpu_req_set][cpu_hit_way] <= merge_write_data(
+                                data[cpu_req_set][cpu_hit_way],
+                                cpu_req_wdata,
+                                cpu_req_addr[WORD_OFFSET_BITS+BYTE_OFFSET_BITS-1:BYTE_OFFSET_BITS],
+                                cpu_req_byte_en
+                            );
+                            dirty[cpu_req_set][cpu_hit_way] <= 1'b1;
+                            lru_state[cpu_req_set] <= update_lru(lru_state[cpu_req_set], cpu_hit_way);
+                        end
+                        // Read hits handled in output logic
+                    end
+                    
                     // Follow next_state (always IDLE for UPDATE_CACHE)
                     state <= next_state;
                     // Track array writes with before values
@@ -757,9 +860,16 @@ module dcache_mshr #(
                         // Write hits handled in sequential block (update cache)
                         cpu_req_ready_reg = 1'b1;
                     end else begin
-                        // Cache miss: check MSHR availability
-                        if (mshr_alloc_ready) begin
-                            // MSHR available - accept request (will allocate and start refill)
+                        // Cache miss: check for coalescing or MSHR availability
+                        if (mshr_match_hit) begin
+                            // Level 2: Match found - coalesce request
+                            // Request is accepted and coalesced into existing MSHR
+                            cpu_req_ready_reg = 1'b1;  // Accept request (coalescing happens this cycle)
+                            `ifdef COCOTB_SIM
+                            $display("[DCACHE_MSHR] IDLE output: MISS coalesced into MSHR %d", mshr_match_id);
+                            `endif
+                        end else if (mshr_alloc_ready) begin
+                            // No match - MSHR available - accept request (will allocate and start refill)
                             // Request is accepted, but will stall after this cycle during refill
                             cpu_req_ready_reg = 1'b1;  // Accept request (allocation happens this cycle)
                         end else begin
@@ -781,8 +891,34 @@ module dcache_mshr #(
                 mem_req_write_reg = 1'b1;
                 mem_req_addr_reg = {tags[saved_set][victim_way], saved_set, {(WORD_OFFSET_BITS+BYTE_OFFSET_BITS){1'b0}}};
                 mem_req_wdata_reg = data[saved_set][victim_way];
-                // Level 1: Blocking - don't accept new requests during refill
-                cpu_req_ready_reg = 1'b0;
+                
+                // Level 3: Accept new requests during write-back (non-blocking)
+                if (cpu_req_valid && !flush_req) begin
+                    if (cpu_cache_hit) begin
+                        // Hit during write-back: serve immediately
+                        if (!cpu_req_write) begin
+                            // Read hit
+                            cpu_resp_rdata_reg = cpu_word_data;
+                            cpu_resp_valid_reg = 1'b1;
+                        end
+                        // Write hits handled in sequential block
+                        cpu_req_ready_reg = 1'b1;
+                    end else begin
+                        // Miss during write-back: check for coalescing or stall
+                        if (mshr_match_hit) begin
+                            // Level 2: Match found - coalesce request
+                            cpu_req_ready_reg = 1'b1;
+                        end else if (mshr_alloc_ready) begin
+                            // No match - MSHR available - accept (will allocate after write-back)
+                            cpu_req_ready_reg = 1'b1;
+                        end else begin
+                            // MSHR full - cannot accept
+                            cpu_req_ready_reg = 1'b0;
+                        end
+                    end
+                end else begin
+                    cpu_req_ready_reg = 1'b0;  // No new request, continue write-back
+                end
             end
             
             STATE_READ_MEM: begin
@@ -790,21 +926,73 @@ module dcache_mshr #(
                 mem_req_valid_reg = 1'b1;
                 mem_req_write_reg = 1'b0;
                 mem_req_addr_reg = {saved_tag, saved_set, {(WORD_OFFSET_BITS+BYTE_OFFSET_BITS){1'b0}}};
-                // Level 1: Blocking - don't accept new requests during refill
-                cpu_req_ready_reg = 1'b0;
+                
+                // Level 3: Accept new requests during fetch (non-blocking)
+                if (cpu_req_valid && !flush_req) begin
+                    if (cpu_cache_hit) begin
+                        // Hit during fetch: serve immediately
+                        if (!cpu_req_write) begin
+                            // Read hit
+                            cpu_resp_rdata_reg = cpu_word_data;
+                            cpu_resp_valid_reg = 1'b1;
+                        end
+                        // Write hits handled in sequential block
+                        cpu_req_ready_reg = 1'b1;
+                    end else begin
+                        // Miss during fetch: check for coalescing or stall
+                        if (mshr_match_hit) begin
+                            // Level 2: Match found - coalesce request
+                            cpu_req_ready_reg = 1'b1;
+                        end else if (mshr_alloc_ready) begin
+                            // No match - MSHR available - accept (will allocate after fetch)
+                            cpu_req_ready_reg = 1'b1;
+                        end else begin
+                            // MSHR full - cannot accept
+                            cpu_req_ready_reg = 1'b0;
+                        end
+                    end
+                end else begin
+                    cpu_req_ready_reg = 1'b0;  // No new request, continue fetch
+                end
             end
             
             STATE_UPDATE_CACHE: begin
                 // After refill, serve the original request from refilled data
                 // Data is available from mem_resp_rdata (just received)
-                // req_word_offset already extracts from saved_addr when not in IDLE
                 if (!saved_write) begin
                     // Read miss: extract word from mem_resp_rdata
                     cpu_resp_rdata_reg = mem_resp_rdata[req_word_offset*DATA_WIDTH +: DATA_WIDTH];
                     cpu_resp_valid_reg = 1'b1;
                 end
                 // Write miss: data already merged in sequential block
-                cpu_req_ready_reg = 1'b1;  // Request is complete
+                
+                // Level 3: Accept new requests during cache update (non-blocking)
+                if (cpu_req_valid && !flush_req) begin
+                    if (cpu_cache_hit) begin
+                        // Hit during update: serve immediately
+                        if (!cpu_req_write) begin
+                            // Read hit
+                            cpu_resp_rdata_reg = cpu_word_data;
+                            cpu_resp_valid_reg = 1'b1;
+                        end
+                        // Write hits handled in sequential block
+                        cpu_req_ready_reg = 1'b1;
+                    end else begin
+                        // Miss during update: check for coalescing or stall
+                        if (mshr_match_hit) begin
+                            // Level 2: Match found - coalesce request
+                            cpu_req_ready_reg = 1'b1;
+                        end else if (mshr_alloc_ready) begin
+                            // No match - MSHR available - accept (will allocate after update)
+                            cpu_req_ready_reg = 1'b1;
+                        end else begin
+                            // MSHR full - cannot accept
+                            cpu_req_ready_reg = 1'b0;
+                        end
+                    end
+                end else begin
+                    cpu_req_ready_reg = 1'b1;  // Original request is complete
+                end
             end
         endcase
     end
