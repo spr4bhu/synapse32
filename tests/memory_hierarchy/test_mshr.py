@@ -620,6 +620,202 @@ async def test_allocate_when_full(dut):
     cocotb.log.info("✓ Allocate when full test PASSED")
 
 
+@cocotb.test()
+async def test_reset_during_operation(dut):
+    """Test: Reset while MSHRs are active (should clear all state)"""
+    clock = Clock(dut.clk, 10, units="ns")
+    cocotb.start_soon(clock.start())
+
+    await reset_mshr(dut)
+
+    # Allocate 3 MSHRs with different addresses
+    allocated_ids = []
+    for i in range(3):
+        dut.alloc_req.value = 1
+        dut.alloc_addr.value = 0x1000 * (i + 1)
+        dut.alloc_word_offset.value = i
+        await RisingEdge(dut.clk)
+        allocated_ids.append(int(dut.alloc_id.value))
+        dut.alloc_req.value = 0
+        await RisingEdge(dut.clk)
+
+    # Verify MSHRs are valid
+    valid_bits = int(dut.mshr_valid.value)
+    assert valid_bits != 0, "Should have MSHRs allocated"
+    for mshr_id in allocated_ids:
+        assert valid_bits & (1 << mshr_id), f"MSHR {mshr_id} should be valid"
+
+    # Reset during operation
+    dut.rst.value = 1
+    await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)
+    dut.rst.value = 0
+    await RisingEdge(dut.clk)
+
+    # Verify all MSHRs are cleared
+    assert dut.mshr_valid.value == 0, "All MSHRs should be invalid after reset"
+    assert dut.mshr_full.value == 0, "MSHR should not be full after reset"
+    assert dut.alloc_ready.value == 1, "MSHR should be ready after reset"
+
+    # Verify word masks are cleared
+    for mshr_id in allocated_ids:
+        word_mask = get_mshr_word_mask(dut, mshr_id)
+        assert word_mask == 0, f"MSHR {mshr_id} word mask should be 0 after reset"
+
+    cocotb.log.info("✓ Reset during operation test PASSED")
+
+
+@cocotb.test()
+async def test_concurrent_alloc_match(dut):
+    """Test: Concurrent alloc + match in same cycle (different addresses)"""
+    clock = Clock(dut.clk, 10, units="ns")
+    cocotb.start_soon(clock.start())
+
+    await reset_mshr(dut)
+
+    # Allocate MSHR for address 0x1000
+    dut.alloc_req.value = 1
+    dut.alloc_addr.value = 0x1000
+    dut.alloc_word_offset.value = 0
+    await RisingEdge(dut.clk)
+    alloc_id_0 = int(dut.alloc_id.value)
+    dut.alloc_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Simultaneously allocate new MSHR and match existing one
+    dut.alloc_req.value = 1
+    dut.alloc_addr.value = 0x2000  # New address
+    dut.alloc_word_offset.value = 1
+    dut.match_req.value = 1
+    dut.match_addr.value = 0x1004  # Match existing MSHR (same line, word 1)
+    dut.match_word_offset.value = 1
+    await RisingEdge(dut.clk)
+
+    new_alloc_id = int(dut.alloc_id.value)
+    match_hit = dut.match_hit.value
+    match_id = int(dut.match_id.value) if match_hit else None
+
+    dut.alloc_req.value = 0
+    dut.match_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Verify both operations succeeded
+    assert dut.mshr_valid.value & (1 << new_alloc_id), "New MSHR should be allocated"
+    assert match_hit == 1, "Match should succeed"
+    assert match_id == alloc_id_0, f"Match should return MSHR {alloc_id_0}"
+
+    # Verify word mask for matched MSHR was updated
+    word_mask = get_mshr_word_mask(dut, alloc_id_0)
+    assert word_mask == 0x0003, f"Word mask should be 0x0003 (bits 0 and 1), got {hex(word_mask)}"
+
+    # Verify new MSHR has correct address
+    stored_addr = get_mshr_addr(dut, new_alloc_id)
+    expected_addr = 0x2000 & ~0x3F
+    assert stored_addr == expected_addr, f"New MSHR address mismatch: got {hex(stored_addr)}, expected {hex(expected_addr)}"
+
+    cocotb.log.info("✓ Concurrent alloc + match test PASSED")
+
+
+@cocotb.test()
+async def test_word_offset_boundaries(dut):
+    """Test: Word offset boundary cases (word 0, word 15)"""
+    clock = Clock(dut.clk, 10, units="ns")
+    cocotb.start_soon(clock.start())
+
+    await reset_mshr(dut)
+
+    # Allocate MSHR for word 0 (first word in line)
+    dut.alloc_req.value = 1
+    dut.alloc_addr.value = 0x1000  # Word 0
+    dut.alloc_word_offset.value = 0
+    await RisingEdge(dut.clk)
+    alloc_id = int(dut.alloc_id.value)
+    dut.alloc_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Verify word mask has bit 0 set
+    word_mask = get_mshr_word_mask(dut, alloc_id)
+    assert word_mask == 0x0001, f"Word mask should be 0x0001 (bit 0), got {hex(word_mask)}"
+
+    # Coalesce request for word 15 (last word in line)
+    dut.match_req.value = 1
+    dut.match_addr.value = 0x103C  # Word 15 (0x1000 + 15*4 = 0x103C)
+    dut.match_word_offset.value = 15
+    await RisingEdge(dut.clk)
+    dut.match_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Word mask should have bits 0 and 15 set
+    word_mask = get_mshr_word_mask(dut, alloc_id)
+    assert word_mask == 0x8001, f"Word mask should be 0x8001 (bits 0 and 15), got {hex(word_mask)}"
+
+    # Verify address extraction works correctly for boundary words
+    stored_addr = get_mshr_addr(dut, alloc_id)
+    expected_addr = 0x1000 & ~0x3F  # Line address (remove word/byte offset)
+    assert stored_addr == expected_addr, f"Address mismatch: got {hex(stored_addr)}, expected {hex(expected_addr)}"
+
+    cocotb.log.info("✓ Word offset boundaries test PASSED")
+
+
+@cocotb.test()
+async def test_retire_twice_idempotent(dut):
+    """Test: Retiring same MSHR twice (should be idempotent)"""
+    clock = Clock(dut.clk, 10, units="ns")
+    cocotb.start_soon(clock.start())
+
+    await reset_mshr(dut)
+
+    # Allocate MSHR
+    dut.alloc_req.value = 1
+    dut.alloc_addr.value = 0x1000
+    dut.alloc_word_offset.value = 0
+    await RisingEdge(dut.clk)
+    alloc_id = int(dut.alloc_id.value)
+    dut.alloc_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Verify MSHR is valid
+    assert dut.mshr_valid.value & (1 << alloc_id), "MSHR should be valid"
+
+    # Retire MSHR first time
+    dut.retire_req.value = 1
+    dut.retire_id.value = alloc_id
+    await RisingEdge(dut.clk)
+    dut.retire_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Verify MSHR is invalid
+    assert not (dut.mshr_valid.value & (1 << alloc_id)), "MSHR should be invalid after first retire"
+
+    # Retire same MSHR again (should be idempotent)
+    dut.retire_req.value = 1
+    dut.retire_id.value = alloc_id
+    await RisingEdge(dut.clk)
+    dut.retire_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Verify MSHR is still invalid (idempotent)
+    assert not (dut.mshr_valid.value & (1 << alloc_id)), "MSHR should remain invalid after second retire"
+
+    # Word mask should still be 0
+    word_mask = get_mshr_word_mask(dut, alloc_id)
+    assert word_mask == 0, f"Word mask should be 0, got {hex(word_mask)}"
+
+    # Should be able to allocate this MSHR again
+    dut.alloc_req.value = 1
+    dut.alloc_addr.value = 0x2000
+    dut.alloc_word_offset.value = 2
+    await RisingEdge(dut.clk)
+    new_alloc_id = int(dut.alloc_id.value)
+    dut.alloc_req.value = 0
+    await RisingEdge(dut.clk)
+
+    # Should be able to reuse (may or may not be same ID, but should work)
+    assert dut.mshr_valid.value & (1 << new_alloc_id), "Should be able to allocate after double retire"
+
+    cocotb.log.info("✓ Retire twice idempotent test PASSED")
+
+
 def runCocotbTests():
     """Run all MSHR tests"""
     import os
