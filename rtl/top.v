@@ -58,10 +58,10 @@ module top (
     assign instr_mem_access = `IS_INSTR_MEM(data_mem_addr);
     assign timer_access = `IS_TIMER_MEM(data_mem_addr);
     assign uart_access = `IS_UART_MEM(data_mem_addr);
-    
+
     // Select the appropriate address for memory access
     assign data_mem_addr = cpu_mem_write_en ? cpu_mem_write_addr : cpu_mem_read_addr;
-    
+
     // Multiplex read data based on address
     assign mem_read_data = timer_access ? timer_read_data :
                           data_mem_access ? data_mem_read_data :
@@ -72,7 +72,7 @@ module top (
     // Debug outputs
     assign pc_debug = cpu_pc_out;
     assign instr_debug = instr_to_cpu;
-    
+
     // Data memory read data (separate wire for clarity)
     wire [31:0] data_mem_read_data;
 

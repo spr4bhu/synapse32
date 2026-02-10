@@ -20,7 +20,7 @@ module riscv_cpu (
     input wire timer_interrupt,
     input wire software_interrupt,
     input wire external_interrupt,
-    
+
     // Instruction cache interface
     input wire icache_stall,                     // Instruction cache miss stall
     output wire fence_i_signal                   // FENCE.I invalidation signal
