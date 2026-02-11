@@ -1,4 +1,5 @@
 `default_nettype none
+`include "instr_defines.vh"
 module riscv_cpu (
     input wire clk,
     input wire rst,
@@ -16,7 +17,10 @@ module riscv_cpu (
     // Interrupt inputs
     input wire timer_interrupt,
     input wire software_interrupt,
-    input wire external_interrupt
+    input wire external_interrupt,
+
+    input wire icache_stall,
+    output wire fence_i_signal
 );
 
     // Instantiate PC
@@ -25,7 +29,8 @@ module riscv_cpu (
     wire [31:0] pc_inst0_jump;
     wire load_use_stall; // For load-use hazards
     wire pipeline_stall;
-    assign pipeline_stall = load_use_stall;
+    assign pipeline_stall = load_use_stall || icache_stall;
+    assign fence_i_signal = (id_ex_inst0_instr_id_out == INSTR_FENCE_I);
     // Branch handling: use EX stage jump signal/address
     assign pc_inst0_j_signal = ex_inst0_jump_signal_out;
     assign pc_inst0_jump = ex_inst0_jump_addr_out;
