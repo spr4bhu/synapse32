@@ -23,7 +23,9 @@ module riscv_cpu (
     wire [31:0] pc_inst0_out;
     wire pc_inst0_j_signal;
     wire [31:0] pc_inst0_jump;
-    wire stall_pipeline; // For load-use hazards
+    wire load_use_stall; // For load-use hazards
+    wire pipeline_stall;
+    assign pipeline_stall = load_use_stall;
     // Branch handling: use EX stage jump signal/address
     assign pc_inst0_j_signal = ex_inst0_jump_signal_out;
     assign pc_inst0_jump = ex_inst0_jump_addr_out;
@@ -32,7 +34,7 @@ module riscv_cpu (
         .rst(rst),
         .j_signal(pc_inst0_j_signal),
         .jump(pc_inst0_jump),
-        .stall(stall_pipeline), // Stall on load-use hazard
+        .stall(pipeline_stall), // Stall on load-use hazard
         .out(pc_inst0_out)
     );
 
@@ -46,12 +48,16 @@ module riscv_cpu (
     wire branch_flush;
     assign branch_flush = ex_inst0_jump_signal_out; // Flush IF/ID if branch taken
     // If branch taken, flush IF/ID by setting instruction to 0 (NOP)
+    wire [31:0] instruction_to_if_id;
+    assign instruction_to_if_id = branch_flush ? 32'h00000013 : module_instr_in;
+    wire if_id_stall;
+    assign if_id_stall = pipeline_stall && !branch_flush;
     IF_ID if_id_inst0 (
         .clk(clk),
         .rst(rst),
         .pc_in(pc_inst0_out),
-        .instruction_in(branch_flush ? 32'h13 : module_instr_in),
-        .stall(stall_pipeline), // Stall on load-use hazard
+        .instruction_in(instruction_to_if_id),
+        .stall(if_id_stall),
         .pc_out(if_id_pc_out),
         .instruction_out(if_id_instr_out)
     );
@@ -89,7 +95,7 @@ module riscv_cpu (
         .instr_id_ex(id_ex_inst0_instr_id_out),
         .rd_ex(id_ex_inst0_rd_addr_out),
         .rd_valid_ex(id_ex_inst0_rd_valid_out),
-        .stall_pipeline(stall_pipeline)
+        .stall_pipeline(load_use_stall)
     );
 
     // Instantiate Register File
@@ -151,7 +157,7 @@ module riscv_cpu (
         .pc_in(if_id_pc_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
-        .stall(pipeline_flush || stall_pipeline), // Use combined flush
+        .stall(pipeline_flush || pipeline_stall), // Use combined flush
         .rs1_valid_out(id_ex_inst0_rs1_valid_out),
         .rs2_valid_out(id_ex_inst0_rs2_valid_out),
         .rd_valid_out(id_ex_inst0_rd_valid_out),
@@ -454,7 +460,5 @@ module riscv_cpu (
         .rd_value_out(wb_inst0_rd_value_out),
         .wr_en_out(wb_inst0_wr_en_out)
     );
-
-    // Write Back Stage
 
 endmodule
