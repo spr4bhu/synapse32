@@ -19,8 +19,8 @@ module alu (
             INSTR_SLL:   ALUoutput = rs1 << rs2[4:0];  // Logical left shift
             INSTR_SRL:   ALUoutput = rs1 >> rs2[4:0];  // Logical right shift
             INSTR_SRA:   ALUoutput = $signed(rs1) >>> rs2[4:0];  // Arithmetic right shift
-            INSTR_SLT:   ALUoutput = {32{$signed(rs1) < $signed(rs2)}};  // Set less than (signed comparison)
-            INSTR_SLTU:  ALUoutput = {32{rs1 < rs2}};  // Set less than (unsigned comparison)
+            INSTR_SLT:   ALUoutput = {31'b0, $signed(rs1) < $signed(rs2)};  // Set less than (signed comparison)
+            INSTR_SLTU:  ALUoutput = {31'b0, rs1 < rs2};  // Set less than (unsigned comparison)
             INSTR_ADDI:  ALUoutput = $signed(rs1) + $signed(imm);  // Add immediate
             INSTR_XORI:  ALUoutput = rs1 ^ imm;  // Bitwise XOR with immediate
             INSTR_ORI:   ALUoutput = rs1 | imm;  // Bitwise OR with immediate
@@ -28,8 +28,8 @@ module alu (
             INSTR_SLLI:  ALUoutput = rs1 << imm[4:0];  // Logical left shift with immediate
             INSTR_SRLI:  ALUoutput = rs1 >> imm[4:0];  // Logical right shift with immediate
             INSTR_SRAI:  ALUoutput = $signed(rs1) >>> imm[4:0];  // Arithmetic right shift with immediate
-            INSTR_SLTI:  ALUoutput = {32{$signed(rs1) < $signed(imm)}};  // Set less than immediate (signed comparison)
-            INSTR_SLTIU: ALUoutput = {32{rs1 < imm}};  // Set less than immediate (unsigned comparison)
+            INSTR_SLTI:  ALUoutput = {31'b0, $signed(rs1) < $signed(imm)};  // Set less than immediate (signed comparison)
+            INSTR_SLTIU: ALUoutput = {31'b0, rs1 < imm};  // Set less than immediate (unsigned comparison)
             default:     ALUoutput = 0;  // Default case: output zero
         endcase
     end
