@@ -29,7 +29,15 @@ module top (
     wire [31:0] data_mem_addr;
     wire [3:0] cpu_write_byte_enable;  // Write byte enables
     wire [2:0] cpu_load_type;          // Load type
-    
+
+    // Instruction cache interface wires
+    wire [31:0] cache_mem_addr;
+    wire cache_mem_req;
+    wire [31:0] cache_mem_data;
+    wire cache_mem_valid;
+    wire icache_stall;
+    wire fence_i_signal;
+
     // Timer module wires
     wire [31:0] timer_read_data;
     wire timer_valid;
@@ -83,8 +91,34 @@ module top (
         .module_read_addr(cpu_mem_read_addr),
         .module_write_addr(cpu_mem_write_addr),
         .module_write_byte_enable(cpu_write_byte_enable),
-        .module_load_type(cpu_load_type)
+        .module_load_type(cpu_load_type),
+        .icache_stall(icache_stall),
+        .fence_i_signal(fence_i_signal)
     );
+
+    // Instruction cache between CPU and unified memory
+    icache #(
+        .ADDR_WIDTH(32),
+        .DATA_WIDTH(32),
+        .NUM_WAYS(4),
+        .NUM_SETS(64),
+        .CACHE_LINE_WORDS(4)
+    ) icache_inst (
+        .clk(clk),
+        .rst(rst),
+        .cpu_addr(cpu_pc_out),
+        .cpu_req(!rst),
+        .cpu_data(instr_to_cpu),
+        .cpu_valid(),
+        .cpu_stall(icache_stall),
+        .mem_addr(cache_mem_addr),
+        .mem_req(cache_mem_req),
+        .mem_data(cache_mem_data),
+        .mem_valid(cache_mem_valid),
+        .invalidate(fence_i_signal)
+    );
+
+    assign cache_mem_valid = cache_mem_req;
 
     // Address translation for unified memory
     wire [31:0] instr_addr;
@@ -92,7 +126,7 @@ module top (
     wire data_we;
     wire data_re;
 
-    assign instr_addr = cpu_pc_out;
+    assign instr_addr = cache_mem_addr;
     assign data_addr = instr_mem_access ? (data_mem_addr - `INSTR_MEM_BASE) :
                                           (data_mem_addr - `DATA_MEM_BASE + `INSTR_MEM_SIZE);
     assign data_we = cpu_mem_write_en && data_mem_access;
@@ -102,7 +136,7 @@ module top (
     unified_memory unified_mem_inst (
         .clk(clk),
         .addr_instr(instr_addr),
-        .instr_out(instr_to_cpu),
+        .instr_out(cache_mem_data),
         .addr_data(data_addr),
         .write_data(cpu_mem_write_data),
         .read_data(data_mem_read_data),
