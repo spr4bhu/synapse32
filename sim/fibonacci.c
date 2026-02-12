@@ -1,5 +1,4 @@
 //very simple fibonacci sequence generator
-#include <stdbool.h>
 #include <stdint.h>
 
 #if defined(__linux__) || defined(__APPLE__)
