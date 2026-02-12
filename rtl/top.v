@@ -133,7 +133,11 @@ module top (
     assign data_re = cpu_mem_read_en && (data_mem_access || instr_mem_access);
 
     // Instantiate unified memory
-    unified_memory unified_mem_inst (
+    unified_memory #(
+        .ADDR_WIDTH(32),
+        .DATA_WIDTH(32),
+        .MEM_SIZE(2097152)  // 2 MB total (1 MB instructions + 1 MB data)
+    ) unified_mem_inst (
         .clk(clk),
         .addr_instr(instr_addr),
         .instr_out(cache_mem_data),
