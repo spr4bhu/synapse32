@@ -29,7 +29,6 @@ module top (
     wire [31:0] data_mem_addr;
     wire [3:0] cpu_write_byte_enable;  // Write byte enables
     wire [2:0] cpu_load_type;          // Load type
-    wire [31:0] instr_read_data;
     
     // Timer module wires
     wire [31:0] timer_read_data;
@@ -59,7 +58,7 @@ module top (
     assign mem_read_data = timer_access ? timer_read_data : 
                           data_mem_access ? data_mem_read_data :
                           uart_access ? uart_read_data :
-                            instr_mem_access ? instr_read_data : 32'h00000000;
+                          instr_mem_access ? data_mem_read_data : 32'h00000000;
     
     // Debug outputs
     assign pc_debug = cpu_pc_out;
@@ -87,33 +86,37 @@ module top (
         .module_load_type(cpu_load_type)
     );
 
-    // Instantiate instruction memory
-    instr_mem #(
-        .DATA_WIDTH(32),
-        .ADDR_WIDTH(32),
-        .MEM_SIZE(131072)  // 512KB / 4 bytes = 128K words
-    ) instr_mem_inst (
-        .instr_addr(cpu_pc_out),
-        .instr_addr_p2(data_mem_addr),
-        .load_type(cpu_load_type),
-        .instr(instr_to_cpu),
-        .instr_p2(instr_read_data)
-    );
+    // Address translation for unified memory
+    wire [31:0] instr_addr;
+    wire [31:0] data_addr;
+    wire data_we;
+    wire data_re;
 
-    // Instantiate data memory  
-    data_mem #(
-        .DATA_WIDTH(32),
+    assign instr_addr = cpu_pc_out;
+    assign data_addr = instr_mem_access ? (data_mem_addr - `INSTR_MEM_BASE) :
+                                          (data_mem_addr - `DATA_MEM_BASE + `INSTR_MEM_SIZE);
+    assign data_we = cpu_mem_write_en && data_mem_access;
+    assign data_re = cpu_mem_read_en && (data_mem_access || instr_mem_access);
+
+    // Unified memory size covers both instruction and data regions
+    localparam UNIFIED_MEM_SIZE = `INSTR_MEM_SIZE + `DATA_MEM_SIZE;
+
+    // Instantiate unified memory (parameterized like data_mem / instr_mem on main)
+    unified_memory #(
         .ADDR_WIDTH(32),
-        .MEM_SIZE(1048576)  // 1MB in bytes
-    ) data_mem_inst (
+        .DATA_WIDTH(32),
+        .MEM_SIZE(1572864)  // 1.5MB in bytes (instr + data)
+    ) unified_mem_inst (
         .clk(clk),
-        .wr_en(cpu_mem_write_en && data_mem_access),
-        .rd_en(cpu_mem_read_en && data_mem_access),
-        .write_byte_enable(cpu_write_byte_enable),
-        .load_type(cpu_load_type),
-        .addr(data_mem_addr - `DATA_MEM_BASE),
-        .wr_data(cpu_mem_write_data),
-        .rd_data_out(data_mem_read_data)
+        .addr_instr(instr_addr),
+        .instr_out(instr_to_cpu),
+        .addr_data(data_addr),
+        .write_data(cpu_mem_write_data),
+        .read_data(data_mem_read_data),
+        .write_enable(data_we),
+        .byte_enable(cpu_write_byte_enable),
+        .read_enable(data_re),
+        .load_type(cpu_load_type)
     );
     
     // Instantiate timer module
