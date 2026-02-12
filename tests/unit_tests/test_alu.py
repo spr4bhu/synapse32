@@ -182,9 +182,9 @@ async def test_random_inputs(dut):
         elif instr == 0x9:  # SLT
             rs1_signed = rs1 if rs1 < 0x80000000 else rs1 - 0x100000000
             rs2_signed = rs2 if rs2 < 0x80000000 else rs2 - 0x100000000
-            expected = 1 if rs1_signed < rs2_signed else 0
+            expected = 0x00000001 if rs1_signed < rs2_signed else 0
         elif instr == 0xA:  # SLTU
-            expected = 1 if rs1 < rs2 else 0
+            expected = 0x00000001 if rs1 < rs2 else 0
         elif instr == 0xB:  # ADDI
             expected = (rs1 + imm) & 0xFFFFFFFF
         elif instr == 0xC:  # XORI
@@ -203,9 +203,9 @@ async def test_random_inputs(dut):
         elif instr == 0x12:  # SLTI
             rs1_signed = rs1 if rs1 < 0x80000000 else rs1 - 0x100000000
             imm_signed = imm if imm < 0x80000000 else imm - 0x100000000
-            expected = 1 if rs1_signed < imm_signed else 0
+            expected = 0x00000001 if rs1_signed < imm_signed else 0
         elif instr == 0x13:  # SLTIU
-            expected = 1 if rs1 < imm else 0
+            expected = 0x00000001 if rs1 < imm else 0
             
         await verify_alu_operation(dut, rs1, rs2, imm, instr, pc_input, expected, f"Random test instr=0x{instr:x}")
 

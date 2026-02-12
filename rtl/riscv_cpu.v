@@ -1,5 +1,6 @@
 `default_nettype none
 `include "instr_defines.vh"
+`include "memory_map.vh"
 module riscv_cpu (
     input wire clk,
     input wire rst,
@@ -406,8 +407,13 @@ module riscv_cpu (
         .prev_store_addr(mem_wb_inst0_mem_addr_out),
         .store_load_hazard(store_load_hazard),
         .forwarded_data(forwarded_store_data),
-        .rs2_value(ex_mem_inst0_rs2_value_out)  // Forwarded store data
+        .rs2_value(mem_wb_inst0_rs2_value_out)
     );
+
+    // Only forward for RAM (DATA_MEM), not MMIO regions (UART, Timer)
+    wire is_data_mem = `IS_DATA_MEM(ex_mem_inst0_mem_addr_out);
+    wire [31:0] mem_data_to_wb;
+    assign mem_data_to_wb = (store_load_hazard && is_data_mem) ? forwarded_store_data : module_read_data_in;
 
     MEM_WB mem_wb_inst0 (
         .clk(clk),
@@ -424,11 +430,7 @@ module riscv_cpu (
         .jump_addr_in(ex_mem_inst0_jump_addr_out),
         .instr_id_in(ex_mem_inst0_instr_id_out),
         .rd_valid_in(ex_mem_inst0_rd_valid_out),
-        .mem_data_in(module_read_data_in),  // Connect memory data
-
-        // Store-load forwarding connections
-        .store_load_hazard(store_load_hazard),
-        .store_data(forwarded_store_data),
+        .mem_data_in(mem_data_to_wb),
 
         // Outputs
         .rs1_addr_out(mem_wb_inst0_rs1_addr_out),
