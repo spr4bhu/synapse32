@@ -58,10 +58,13 @@ module unified_memory #(
 
     // Instruction port (word-aligned, read-only)
     // Combinational read for zero-latency instruction fetch
+    wire [ADDR_WIDTH-1:0] aligned_instr_addr;
+    assign aligned_instr_addr = {addr_instr[ADDR_WIDTH-1:2], 2'b00};
+
     always @(*) begin
-        if (addr_instr < MEM_SIZE - 3) begin
+        if (aligned_instr_addr < MEM_SIZE - 3) begin
             // Little-endian: LSB first
-            instr_out = {ram[addr_instr + 3], ram[addr_instr + 2], ram[addr_instr + 1], ram[addr_instr + 0]};
+            instr_out = {ram[aligned_instr_addr + 3], ram[aligned_instr_addr + 2], ram[aligned_instr_addr + 1], ram[aligned_instr_addr + 0]};
         end else begin
             instr_out = 32'h00000013; // NOP for out-of-bounds
         end
