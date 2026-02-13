@@ -25,7 +25,9 @@ module unified_memory #(
 
     // Byte-addressed memory array
     reg [7:0] ram [0:MEM_SIZE-1];
+`ifdef COCOTB_SIM
     reg [31:0] word_mem [0:MEM_SIZE/4-1];
+`endif
 
     // Initialize memory with NOPs
     initial begin
@@ -44,6 +46,9 @@ module unified_memory #(
             $display("Loading unified memory from file: %s", `INSTR_HEX_FILE);
 
             // Read program as words
+            for (i = 0; i < MEM_SIZE/4; i = i + 1) begin
+                word_mem[i] = 32'h00000013; // NOP
+            end
             $readmemh(`INSTR_HEX_FILE, word_mem);
 
             // Unpack words into byte array (little-endian)
@@ -114,3 +119,4 @@ module unified_memory #(
     end
 
 endmodule
+`default_nettype wire

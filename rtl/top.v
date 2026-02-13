@@ -49,7 +49,9 @@ module top (
     assign data_mem_access = `IS_DATA_MEM(data_mem_addr);
     assign timer_access = `IS_TIMER_MEM(data_mem_addr);
     assign uart_access = `IS_UART_MEM(data_mem_addr);
+    /* verilator lint_off UNSIGNED */
     assign instr_mem_access = `IS_INSTR_MEM(data_mem_addr);
+    /* verilator lint_on UNSIGNED */
     
     // Select the appropriate address for memory access
     assign data_mem_addr = cpu_mem_write_en ? cpu_mem_write_addr : cpu_mem_read_addr;
@@ -105,7 +107,7 @@ module top (
     unified_memory #(
         .ADDR_WIDTH(32),
         .DATA_WIDTH(32),
-        .MEM_SIZE(1572864)  // 1.5MB in bytes (instr + data)
+        .MEM_SIZE(UNIFIED_MEM_SIZE)
     ) unified_mem_inst (
         .clk(clk),
         .addr_instr(instr_addr),
