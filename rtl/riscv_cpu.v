@@ -23,9 +23,7 @@ module riscv_cpu (
     wire [31:0] pc_inst0_out;
     wire pc_inst0_j_signal;
     wire [31:0] pc_inst0_jump;
-    wire load_use_stall; // For load-use hazards
-    wire pipeline_stall;
-    assign pipeline_stall = load_use_stall;
+    wire pipeline_stall; // For load-use hazards
     // Branch handling: use EX stage jump signal/address
     assign pc_inst0_j_signal = ex_inst0_jump_signal_out;
     assign pc_inst0_jump = ex_inst0_jump_addr_out;
@@ -95,7 +93,7 @@ module riscv_cpu (
         .instr_id_ex(id_ex_inst0_instr_id_out),
         .rd_ex(id_ex_inst0_rd_addr_out),
         .rd_valid_ex(id_ex_inst0_rd_valid_out),
-        .stall_pipeline(load_use_stall)
+        .stall_pipeline(pipeline_stall)
     );
 
     // Instantiate Register File

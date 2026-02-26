@@ -25,7 +25,9 @@ module unified_memory #(
 
     // Byte-addressed memory array
     reg [7:0] ram [0:MEM_SIZE-1];
+`ifdef COCOTB_SIM
     reg [31:0] word_mem [0:MEM_SIZE/4-1];
+`endif
 
     // Initialize memory with NOPs
     initial begin

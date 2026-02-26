@@ -95,7 +95,7 @@ module top (
     assign instr_addr = cpu_pc_out;
     assign data_addr = instr_mem_access ? (data_mem_addr - `INSTR_MEM_BASE) :
                                           (data_mem_addr - `DATA_MEM_BASE + `INSTR_MEM_SIZE);
-    assign data_we = cpu_mem_write_en && data_mem_access;
+    assign data_we = cpu_mem_write_en && (data_mem_access || instr_mem_access);
     assign data_re = cpu_mem_read_en && (data_mem_access || instr_mem_access);
 
     // Unified memory size covers both instruction and data regions
