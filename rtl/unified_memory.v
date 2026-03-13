@@ -1,4 +1,5 @@
 `default_nettype none
+`include "memory_map.vh"
 
 // unified_memory.v - Unified dual-port memory for instructions and data
 
@@ -26,7 +27,7 @@ module unified_memory #(
     // Byte-addressed memory array
     reg [7:0] ram [0:MEM_SIZE-1];
 `ifdef COCOTB_SIM
-    reg [31:0] word_mem [0:MEM_SIZE/4-1];
+    reg [31:0] word_mem [0:`INSTR_MEM_SIZE/4-1];
 `endif
 
     // Initialize memory with NOPs
@@ -46,13 +47,13 @@ module unified_memory #(
             $display("Loading unified memory from file: %s", `INSTR_HEX_FILE);
 
             // Read program as words
-            for (i = 0; i < MEM_SIZE/4; i = i + 1) begin
+            for (i = 0; i < `INSTR_MEM_SIZE/4; i = i + 1) begin
                 word_mem[i] = 32'h00000013; // NOP
             end
             $readmemh(`INSTR_HEX_FILE, word_mem);
 
             // Unpack words into byte array (little-endian)
-            for (i = 0; i < MEM_SIZE/4; i = i + 1) begin
+            for (i = 0; i < `INSTR_MEM_SIZE/4; i = i + 1) begin
                 ram[i*4 + 0] = word_mem[i][7:0];
                 ram[i*4 + 1] = word_mem[i][15:8];
                 ram[i*4 + 2] = word_mem[i][23:16];
@@ -67,7 +68,7 @@ module unified_memory #(
     assign aligned_instr_addr = {addr_instr[ADDR_WIDTH-1:2], 2'b00};
 
     always @(*) begin
-        if (aligned_instr_addr < MEM_SIZE - 3) begin
+        if (aligned_instr_addr < `INSTR_MEM_SIZE - 3) begin
             // Little-endian: LSB first
             instr_out = {ram[aligned_instr_addr + 3], ram[aligned_instr_addr + 2], ram[aligned_instr_addr + 1], ram[aligned_instr_addr + 0]};
         end else begin

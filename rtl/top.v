@@ -56,16 +56,16 @@ module top (
     
     // Multiplex read data based on address
     assign mem_read_data = timer_access ? timer_read_data : 
-                          data_mem_access ? data_mem_read_data :
+                          data_mem_access ? unified_mem_read_data :
                           uart_access ? uart_read_data :
-                          instr_mem_access ? data_mem_read_data : 32'h00000000;
+                          instr_mem_access ? unified_mem_read_data : 32'h00000000;
     
     // Debug outputs
     assign pc_debug = cpu_pc_out;
     assign instr_debug = instr_to_cpu;
     
     // Data memory read data (separate wire for clarity)
-    wire [31:0] data_mem_read_data;
+    wire [31:0] unified_mem_read_data;
 
     // Instantiate the RISC-V CPU core
     riscv_cpu cpu_inst (
@@ -112,7 +112,7 @@ module top (
         .instr_out(instr_to_cpu),
         .addr_data(data_addr),
         .write_data(cpu_mem_write_data),
-        .read_data(data_mem_read_data),
+        .read_data(unified_mem_read_data),
         .write_enable(data_we),
         .byte_enable(cpu_write_byte_enable),
         .read_enable(data_re),
