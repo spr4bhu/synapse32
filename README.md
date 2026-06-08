@@ -22,8 +22,8 @@ This processor implements a classic 5-stage RISC pipeline:
    - Makes branch decisions
 
 4. **MEM (Memory Access)**:
-   - Performs memory reads and writes
-   - Handles load and store instructions
+   - Issues loads and stores to the memory subsystem through the load and store queues
+   - Memory accesses complete asynchronously and retire in program order
 
 5. **WB (Write Back)**:
    - Writes results back to the register file
@@ -43,9 +43,8 @@ The CPU implements several techniques to handle pipeline hazards:
    - Inserts pipeline stalls when necessary
 
 3. **Store-Load Forwarding**:
-   - Detects when a load reads from the same address as a preceding store
-   - Forwards store data directly to the load, bypassing memory
-   - Ensures memory consistency without stalls
+   - The store queue forwards a pending store's data to a later load from the same address, before the store drains to memory
+   - Avoids a round-trip to memory while preserving memory consistency
 
 4. **Control Hazard Management**:
    - Handles branch and jump instructions
@@ -59,6 +58,14 @@ The CPU includes an N-way set-associative instruction cache:
 - **Configuration**: 4-way set-associative, 64 sets, 4 words per line (4KB total)
 - **Replacement Policy**: Round-robin
 - **Cache Invalidation**: FENCE.I instruction support
+
+### Memory Subsystem
+
+A single unified memory backs both instructions and data, accessed through a pair of queues:
+
+- **Unified Memory**: One module replacing the earlier separate instruction and data memories
+- **Store Queue**: Buffers stores and forwards their data to later loads from the same address
+- **Load Queue**: Tracks in-flight loads and retires them in program order with sign/zero extension
 
 ## Running Code on the CPU
 
@@ -124,7 +131,7 @@ The regression tests include:
 - **Hazard Handling Tests**: Ensures that data forwarding and hazard detection work correctly.
 - **Control Flow Tests**: Validates branch and jump instructions.
 - **Memory Access Tests**: Checks load and store operations.
-- **Memory Hazard Tests**: Validates store-load hazard detection and forwarding.
+- **Memory Hazard Tests**: Validates store-to-load forwarding and load/store queue behavior.
 - **Instruction Cache Tests**: Validates cache hit/miss, line fetching, invalidation, and replacement policy.
 - **CSR Tests**: Validates the control and status register operations.
 - **UART Tests**: Validates the UART communication functionality.
