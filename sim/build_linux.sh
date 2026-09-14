@@ -127,8 +127,7 @@ write_config_string() {
     printf '%s="%s"\n' "$symbol" "$value" >> "$config_file"
 }
 
-# Fail the build if any symbol requested by the fragments did not survive olddefconfig
-# (merge_config.sh only warns). A disabled request is met when the symbol is unset or absent.
+# merge_config.sh only warns when a requested symbol does not survive olddefconfig.
 verify_kconfig() {
     local config_file="$1"
     shift
@@ -234,8 +233,7 @@ clone_or_update "$OPENSBI_REPO" "$OPENSBI_VERSION" "$OPENSBI_DIR"
 clone_or_update "$BUSYBOX_REPO" "$BUSYBOX_VERSION" "$BUSYBOX_DIR"
 patch_linux_source
 
-# Reproducible images (Documentation/kbuild/reproducible-builds.rst): fixed build time, user and host.
-# SOURCE_DATE_EPOCH also fixes BusyBox's config timestamp; gen_init_cpio -t fixes initramfs mtimes.
+# Reproducible build (Documentation/kbuild/reproducible-builds.rst).
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$LINUX_DIR" log -1 --format=%ct)}"
 KBUILD_BUILD_TIMESTAMP="${KBUILD_BUILD_TIMESTAMP:-$(LC_ALL=C date -u -d "@$SOURCE_DATE_EPOCH")}"
 KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-synapse32}"
@@ -787,7 +785,7 @@ echo "==> Configuring Linux kernel..."
 make -C "$LINUX_DIR" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS_COMPILE" mrproper
 make -C "$LINUX_DIR" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS_COMPILE" "$(pick_linux_defconfig)"
 cc -O2 -Wall -Wextra -o "$GEN_INIT_CPIO_BIN" "$LINUX_DIR/usr/gen_init_cpio.c"
-# gen_init_cpio -t covers directories, nodes and links; regular files keep their on-disk mtime.
+# gen_init_cpio -t does not set the mtime of regular files.
 awk '$1 == "file" { print $3 }' "$INITRAMFS_LIST" | while read -r initramfs_file; do
     touch -d "@$SOURCE_DATE_EPOCH" "$initramfs_file"
 done
@@ -839,7 +837,7 @@ for symbol in "${force_off_symbols[@]}"; do
     write_config_disabled "$CONFIG_FORCE_OFF_FRAGMENT" "$symbol"
 done
 
-# -O: merge_config.sh writes to $OUTPUT/.config, which defaults to the current directory.
+# Without -O, merge_config.sh writes .config to the current directory.
 sh "$LINUX_DIR/scripts/kconfig/merge_config.sh" -m -r -O "$LINUX_DIR" \
     "$LINUX_DIR/.config" "$CONFIG_FRAGMENT"
 make -C "$LINUX_DIR" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS_COMPILE" \

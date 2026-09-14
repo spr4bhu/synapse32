@@ -1,19 +1,7 @@
 """Interrupt transparency sweep.
 
-A correct core takes an asynchronous interrupt at an instruction boundary and resumes exactly there.
-With a handler that saves and restores everything it touches, a program must therefore produce the
-same stores and the same final memory whether or not an interrupt arrives, and whichever cycle it
-arrives on. For every variant (interrupt source, privilege, delegation, MMU) and every scenario
-(control flow, load/store, CSR writes, LR/SC and AMO, M extension, synchronous exceptions, fence.i),
-this test runs the scenario once without an interrupt as the reference, then once per cycle of the
-scenario with the interrupt raised at that cycle, and compares.
-
-Interrupt sources behave like real devices: the software and external lines are held high until the
-handler writes an acknowledge word; the timer fires when mtime reaches the mtimecmp value the program
-loads from its config block, and the handler clears it by writing mtimecmp.
-
-The program image is assembled from the source below and loaded through the unified_mem backdoor, so
-one Verilator build serves every trial and nothing depends on build products outside this test.
+Each scenario runs once without an interrupt as the reference, then once per cycle with an interrupt
+raised at that cycle. Stores and final memory must match the reference.
 """
 
 import os
@@ -45,7 +33,7 @@ SATP_SV32 = 0x8000_0000 | (PAGE_TABLE >> 12)
 MTIMECMP_LO = 0x0200_4000
 UNMAPPED_VA = 0x4000_0000
 
-# Sv32 identity megapages: V R W X A D (code and data), V R W A D (CLINT). No U pages.
+# Sv32 identity megapages
 MEGAPAGES = {
     INSTR_MEM_BASE: 0xCF,
     DATA_MEM_BASE: 0xCF,
@@ -120,7 +108,7 @@ run_m:
 scenario_table:
         .word   sc_control, sc_memory, sc_csr, sc_atomic, sc_muldiv, sc_exceptions, sc_fence
 
-# ---- Machine-mode trap handler: interrupts are acknowledged, exceptions skip the instruction.
+# ---- Machine-mode trap handler
         .align  2
 m_trap:
         csrrw   sp, mscratch, sp
@@ -149,7 +137,7 @@ m_ret:
         csrrw   sp, mscratch, sp
         mret
 
-# ---- Supervisor-mode trap handler: same shape through sscratch/scause/sepc.
+# ---- Supervisor-mode trap handler
         .align  2
 s_trap:
         csrrw   sp, sscratch, sp
@@ -178,7 +166,7 @@ s_ret:
         csrrw   sp, sscratch, sp
         sret
 
-# ---- Scenarios. t6 = result area. Accumulators make a skipped or repeated instruction visible.
+# ---- Scenarios (t6 = result area)
 sc_control:
         li      t6, {RESULT_LO:#x}
         li      s0, 0
@@ -358,12 +346,10 @@ def _find_repo_root() -> Path:
 
 
 def _build_dir() -> Path:
-    # The runner assembles into tests/build; the simulator runs inside sim_build, so it gets the path.
     return Path(os.environ.get("INTERRUPT_SWEEP_BUILD", Path.cwd() / "build" / "interrupt_sweep"))
 
 
 def assemble(build_dir: Path) -> None:
-    """Assemble the scenarios into image.bin and symbols.txt (called by the runner, before the sim)."""
     build_dir.mkdir(parents=True, exist_ok=True)
     src = build_dir / "sweep.S"
     lds = build_dir / "sweep.ld"
@@ -381,12 +367,10 @@ def assemble(build_dir: Path) -> None:
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
     symbols = _elf32_symbols(elf.read_bytes())
     (build_dir / "symbols.txt").write_text("".join(f"{value:08x} {name}\n" for name, value in sorted(symbols.items())))
-    # Elaboration needs some image; the real program is loaded through the backdoor.
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 
 def _elf32_symbols(elf: bytes) -> dict:
-    """Name -> value for every named symbol of a little-endian ELF32 file (no binutils needed)."""
     assert elf[:4] == b"\x7fELF" and elf[4] == 1 and elf[5] == 1, "expected a little-endian ELF32 file"
     e_shoff, = struct.unpack_from("<I", elf, 32)
     e_shentsize, e_shnum = struct.unpack_from("<HH", elf, 46)
@@ -507,7 +491,6 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
 
 
 def _expected_absolute(scenario: str, mmu: int):
-    """A few architectural results the reference run must produce, independent of the sweep."""
     if scenario == "fence":
         return {56: 8 * 7}
     if scenario == "atomic":
@@ -603,7 +586,7 @@ def _make_test(variant):
     return cocotb.test()(test)
 
 
-# INTERRUPT_SWEEP_FILTER=name[,name] runs only those variants (debugging aid, like INTERRUPT_TEST_FILTER).
+# INTERRUPT_SWEEP_FILTER=name[,name] runs only those variants.
 _FILTER = {name for name in os.environ.get("INTERRUPT_SWEEP_FILTER", "").split(",") if name}
 for _variant in VARIANTS:
     if not _FILTER or _variant[0] in _FILTER:

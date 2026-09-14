@@ -394,9 +394,7 @@ module riscv_cpu (
         .interrupt_cause(interrupt_cause),
         .interrupt_to_supervisor(interrupt_to_supervisor),
         .interrupt_taken(interrupt_taken_qualified),
-        // Saved PC is the oldest instruction that has not executed: EX, else
-        // the one waiting in IF/ID (EX bubble after a redirect or load-use
-        // stall), else the fetch PC when the front end is empty.
+        // Oldest unexecuted instruction: EX, else IF/ID (EX bubble), else fetch PC.
         .current_pc(id_ex_inst0_instr_valid_out ? id_ex_inst0_pc_out :
                     if_id_instr_valid_out      ? if_id_pc_out :
                                                  pc_inst0_out),

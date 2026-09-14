@@ -52,7 +52,7 @@ RUN git clone --depth 1 --branch "$SPIKE_VERSION" \
         https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/riscv-isa-sim && \
     mkdir /tmp/riscv-isa-sim/build && \
     cd /tmp/riscv-isa-sim/build && \
-    ../configure CXXFLAGS="-include cstdint" --prefix=/opt/spike && \
+    ../configure CXXFLAGS="-include cstdint" --prefix=/opt/spike --enable-commitlog && \
     make -j"$(nproc)" && \
     make install && \
     rm -rf /tmp/riscv-isa-sim

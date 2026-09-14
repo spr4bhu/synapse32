@@ -1,27 +1,4 @@
-"""Interrupt on a pipeline bubble must save the PC of the instruction waiting in IF/ID.
-
-Program (M-mode, reset at 0x80000000):
-    lui  a0, 0x10000        ; data base
-    auipc t3, 0             ; t3 = pc
-    addi t3, t3, HANDLER-4  ; t3 = handler
-    csrrw x0, mtvec, t3
-    addi t4, x0, 8
-    csrrs x0, mie, t4       ; MSIE
-    csrrs x0, mstatus, t4   ; MIE
-    addi t2, x0, 5
-    sw   t2, 0(a0)
-    lw   t0, 0(a0)
-    addi t1, t0, 1          ; load-use hazard -> bubble in EX
-    sw   t1, 4(a0)          ; expect 6
-    addi t5, x0, 1
-    sw   t5, 8(a0)          ; done flag
-    jal  x0, 0
-handler:
-    mret
-A one-cycle software_interrupt pulse is applied at cycle k for every k in a sweep. Whatever the
-arrival cycle, the program must still store 6 and the done flag: the interrupt may not lose the
-instruction waiting in IF/ID while EX holds a bubble (after a redirect or a load-use stall).
-"""
+"""An interrupt taken while EX holds a bubble must not lose the instruction in IF/ID."""
 import shutil
 from pathlib import Path
 
