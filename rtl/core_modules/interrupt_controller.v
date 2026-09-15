@@ -77,6 +77,17 @@ module interrupt_controller (
             end else if (mtip && mtie) begin
                 interrupt_pending = 1'b1;
                 interrupt_cause = MACHINE_TIMER_INTERRUPT;
+            // Supervisor-level interrupts that are not delegated trap to
+            // M-mode with their own cause codes (privileged spec §3.1.9).
+            end else if (seip && seie && !mideleg[9]) begin
+                interrupt_pending = 1'b1;
+                interrupt_cause = SUPERVISOR_EXTERNAL_INTERRUPT;
+            end else if (ssip && ssie && !mideleg[1]) begin
+                interrupt_pending = 1'b1;
+                interrupt_cause = SUPERVISOR_SOFTWARE_INTERRUPT;
+            end else if (stip && stie && !mideleg[5]) begin
+                interrupt_pending = 1'b1;
+                interrupt_cause = SUPERVISOR_TIMER_INTERRUPT;
             end
         end
 
