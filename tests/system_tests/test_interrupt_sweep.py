@@ -2,6 +2,10 @@
 
 Each scenario runs once without an interrupt as the reference, then once per cycle with an interrupt
 raised at that cycle. Stores and final memory must match the reference.
+
+Vectored variants set MODE 1 in mtvec and stvec. Every vector-table entry checks that it matches the
+trap it was reached by, so a wrong entry hangs the reference run instead of being absorbed by the
+common handler.
 """
 
 import os
@@ -42,18 +46,47 @@ MEGAPAGES = {
 
 SCENARIOS = ["control", "memory", "csr", "atomic", "muldiv", "exceptions", "fence"]
 
-# name, privilege (3 = M, 1 = S), MMU on, source, mideleg
+# name, privilege (3 = M, 1 = S), MMU on, source, mideleg, vectored mtvec/stvec
 VARIANTS = [
-    ("m_software", 3, 0, "software", 0x000),
-    ("m_external", 3, 0, "external", 0x000),
-    ("m_timer", 3, 0, "timer", 0x000),
-    ("s_software_delegated", 1, 0, "software", 0x002),
-    ("s_timer_delegated", 1, 0, "timer", 0x020),
-    ("s_mmu_external_delegated", 1, 1, "external", 0x200),
-    ("s_mmu_software_to_m", 1, 1, "software", 0x000),
+    ("m_software", 3, 0, "software", 0x000, 0),
+    ("m_external", 3, 0, "external", 0x000, 0),
+    ("m_timer", 3, 0, "timer", 0x000, 0),
+    ("s_software_delegated", 1, 0, "software", 0x002, 0),
+    ("s_timer_delegated", 1, 0, "timer", 0x020, 0),
+    ("s_mmu_external_delegated", 1, 1, "external", 0x200, 0),
+    ("s_mmu_software_to_m", 1, 1, "software", 0x000, 0),
+    ("m_timer_vectored", 3, 0, "timer", 0x000, 1),
+    ("s_mmu_external_delegated_vectored", 1, 1, "external", 0x200, 1),
 ]
 
 TRIAL_SLACK_CYCLES = 400
+
+
+def _vector_table(mode: str) -> str:
+    """16 entries; entry i saves t0, checks i against the trap, then joins the direct handler."""
+    lines = [f"        .align  2\n{mode}_vec:"]
+    lines += [f"        j       {mode}_vec_{i}" for i in range(16)]
+    for i in range(16):
+        lines.append(
+            f"{mode}_vec_{i}:\n"
+            f"        csrrw   sp, {mode}scratch, sp\n"
+            f"        sw      t0, 0(sp)\n"
+            f"        li      t0, {i}\n"
+            f"        j       {mode}_vec_check"
+        )
+    lines.append(
+        f"{mode}_vec_check:\n"
+        f"        sw      t1, 4(sp)\n"
+        f"        csrr    t1, {mode}cause\n"
+        f"        bltz    t1, 1f\n"
+        f"        li      t1, 0\n"
+        f"1:\n"
+        f"        andi    t1, t1, 0x3f\n"
+        f"        bne     t0, t1, vector_mismatch\n"
+        f"        lw      t1, 4(sp)\n"
+        f"        j       {mode}_trap_saved"
+    )
+    return "\n".join(lines)
 MIN_DISTINCT_INTERRUPT_PCS = 10
 
 PROGRAM = f"""
@@ -61,10 +94,20 @@ PROGRAM = f"""
         .option norelax
         .global _start
 _start:
-        la      t0, m_trap
-        csrw    mtvec, t0
-        la      t0, s_trap
-        csrw    stvec, t0
+        li      t0, {CONFIG:#x}
+        lw      t3, 20(t0)
+        la      t1, m_trap
+        beqz    t3, 3f
+        la      t1, m_vec
+        ori     t1, t1, 1
+3:
+        csrw    mtvec, t1
+        la      t1, s_trap
+        beqz    t3, 4f
+        la      t1, s_vec
+        ori     t1, t1, 1
+4:
+        csrw    stvec, t1
         li      t0, {M_SCRATCH:#x}
         csrw    mscratch, t0
         li      t0, {S_SCRATCH:#x}
@@ -113,6 +156,7 @@ scenario_table:
 m_trap:
         csrrw   sp, mscratch, sp
         sw      t0, 0(sp)
+m_trap_saved:
         sw      t1, 4(sp)
         csrr    t0, mcause
         bltz    t0, m_irq
@@ -142,6 +186,7 @@ m_ret:
 s_trap:
         csrrw   sp, sscratch, sp
         sw      t0, 0(sp)
+s_trap_saved:
         sw      t1, 4(sp)
         csrr    t0, scause
         bltz    t0, s_irq
@@ -165,6 +210,12 @@ s_ret:
         lw      t0, 0(sp)
         csrrw   sp, sscratch, sp
         sret
+
+{_vector_table("m")}
+{_vector_table("s")}
+
+vector_mismatch:
+        j       vector_mismatch
 
 # ---- Scenarios (t6 = result area)
 sc_control:
@@ -432,7 +483,7 @@ class Trial:
 
 
 async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limit, want_entry=False):
-    _, privilege, mmu, source, mideleg = variant
+    _, privilege, mmu, source, mideleg, vectored = variant
     pin = {"software": dut.software_interrupt, "external": dut.external_interrupt}.get(source)
 
     dut.rst.value = 1
@@ -445,6 +496,7 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
     _poke(dut, CONFIG + 8, mmu)
     _poke(dut, CONFIG + 12, timer_target)
     _poke(dut, CONFIG + 16, mideleg)
+    _poke(dut, CONFIG + 20, vectored)
     for index in range(RESULT_WORDS):
         _poke(dut, RESULT_LO + 4 * index, 0)
     _poke(dut, DONE_ADDR, 0)

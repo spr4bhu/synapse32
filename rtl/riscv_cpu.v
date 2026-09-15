@@ -295,6 +295,13 @@ module riscv_cpu (
     assign module_data_mxr_out = csr_file_inst.mstatus[19];
     assign module_instr_mmu_enable_out = (csr_file_inst.privilege_mode != PRIV_M) && csr_file_inst.satp[31];
     assign module_instr_privilege_out = csr_file_inst.privilege_mode;
+    // Trap targets (privileged spec 3.1.7): exceptions enter at BASE; in vectored MODE (1)
+    // interrupts enter at BASE + 4 * cause code.
+    wire [31:0] mtvec_base = {csr_file_inst.mtvec[31:2], 2'b00};
+    wire [31:0] stvec_base = {csr_file_inst.stvec[31:2], 2'b00};
+    wire interrupt_vectored = interrupt_to_supervisor ? csr_file_inst.stvec[0] : csr_file_inst.mtvec[0];
+    wire [31:0] interrupt_vector = (interrupt_to_supervisor ? stvec_base : mtvec_base) +
+                                   (interrupt_vectored ? {interrupt_cause[29:0], 2'b00} : 32'h0);
     assign interrupt_taken_qualified = interrupt_taken &&
                                        !synchronous_exception_taken &&
                                        !mem_stage_page_fault_taken &&
@@ -484,9 +491,10 @@ module riscv_cpu (
                            !instr_stage_page_fault_taken),
         .interrupt_cause(interrupt_cause),
         .interrupt_to_supervisor(interrupt_to_supervisor),
-        .mtvec(csr_file_inst.mtvec),
+        .interrupt_vector(interrupt_vector),
+        .mtvec(mtvec_base),
         .mepc(csr_file_inst.mepc),
-        .stvec(csr_file_inst.stvec),
+        .stvec(stvec_base),
         .sepc(csr_file_inst.sepc),
         .medeleg(csr_file_inst.medeleg),
         .privilege_mode(csr_file_inst.privilege_mode),
@@ -749,12 +757,12 @@ module riscv_cpu (
         (csr_file_inst.privilege_mode != PRIV_M) &&
         ((mem_stage_load_page_fault && csr_file_inst.medeleg[13]) ||
          (mem_stage_store_page_fault && csr_file_inst.medeleg[15]));
-    assign mem_stage_jump_addr = mem_stage_trap_to_supervisor ? csr_file_inst.stvec : csr_file_inst.mtvec;
+    assign mem_stage_jump_addr = mem_stage_trap_to_supervisor ? stvec_base : mtvec_base;
 
     assign instr_stage_page_fault_taken = id_ex_inst0_instr_page_fault_out && id_ex_inst0_instr_valid_out;
     assign instr_stage_trap_to_supervisor =
         (csr_file_inst.privilege_mode != PRIV_M) && csr_file_inst.medeleg[12];
-    assign instr_stage_jump_addr = instr_stage_trap_to_supervisor ? csr_file_inst.stvec : csr_file_inst.mtvec;
+    assign instr_stage_jump_addr = instr_stage_trap_to_supervisor ? stvec_base : mtvec_base;
 
     assign csr_exception_pc = mem_stage_page_fault_taken   ? ex_mem_inst0_pc_out :
                               instr_stage_page_fault_taken ? id_ex_inst0_pc_out :

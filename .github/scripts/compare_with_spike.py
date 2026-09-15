@@ -29,7 +29,6 @@ NOT_APPLICABLE = {
 # Pass/fail must match Spike, but the traces differ because the feature is optional.
 TRACE_NOT_COMPARABLE = {
     "rv32mi-p-breakpoint": "Sdtrig is optional; the core has no triggers, so the test skips its trigger cases",
-    "rv32mi-p-illegal": "mtvec is WARL; the core supports direct mode only, so the test skips its vectored part",
     "rv32si-p-dirty": "A/D bits: the core updates them in hardware, Spike 1.1.0 traps and the handler sets D",
 }
 

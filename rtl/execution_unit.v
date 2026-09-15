@@ -42,6 +42,7 @@ module execution_unit(
     input wire interrupt_pending,
     input wire [31:0] interrupt_cause,
     input wire interrupt_to_supervisor,
+    input wire [31:0] interrupt_vector,
     input wire [31:0] mtvec,
     input wire [31:0] mepc,
     input wire [31:0] stvec,
@@ -243,7 +244,7 @@ always @(*) begin
     if (interrupt_pending) begin
         jump_signal = 1;
         trap_to_supervisor = interrupt_to_supervisor;
-        jump_addr = interrupt_to_supervisor ? stvec : mtvec;  // Jump to interrupt handler
+        jump_addr = interrupt_vector;  // Jump to interrupt handler
         flush_pipeline = 1;
         interrupt_taken = 1;
     end else if (instr_valid && instr_id == INSTR_INVALID) begin

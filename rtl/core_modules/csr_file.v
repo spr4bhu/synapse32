@@ -338,14 +338,16 @@ module csr_file (
                     CSR_MIDELEG:  mideleg <= write_data;
                     CSR_MIE:      mie <= write_data;
                     CSR_SIE:      mie <= (mie & ~S_INTERRUPT_MASK) | (write_data & S_INTERRUPT_MASK);
-                    CSR_MTVEC:    mtvec <= {write_data[31:2], 2'b00};
+                    // MODE is WARL: 0 (direct) and 1 (vectored) are legal; reserved 2 and 3
+                    // map to 0 and 1 by clearing bit 1 (privileged spec 3.1.7).
+                    CSR_MTVEC:    mtvec <= {write_data[31:2], 1'b0, write_data[0]};
                     CSR_MCOUNTEREN: mcounteren <= write_data & COUNTEREN_MASK;
                     CSR_MSCRATCH: mscratch <= write_data;
                     CSR_MEPC:     mepc <= write_data;
                     CSR_MCAUSE:   mcause <= write_data;
                     CSR_MTVAL:    mtval <= write_data;
                     CSR_MCOUNTINHIBIT: mcountinhibit <= write_data & MCOUNTINHIBIT_MASK;
-                    CSR_STVEC:    stvec <= {write_data[31:2], 2'b00};
+                    CSR_STVEC:    stvec <= {write_data[31:2], 1'b0, write_data[0]};
                     CSR_SCOUNTEREN: scounteren <= write_data & COUNTEREN_MASK;
                     CSR_SSCRATCH: sscratch <= write_data;
                     CSR_SEPC:     sepc <= write_data;
