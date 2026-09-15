@@ -30,8 +30,10 @@ module sv32_data_check (
         permission_fault = 1'b0;
 
         if (translate_enable) begin
+            // An access that writes (store, SC, AMO) raises only the store/AMO
+            // page fault, even though an AMO also reads (privileged spec 4.3.2).
             if (!addr_valid_in) begin
-                load_page_fault = data_rd_en;
+                load_page_fault = data_rd_en && !data_wr_req;
                 store_page_fault = data_wr_req;
             end else begin
                 effective_read_ok = leaf_pte[1] || (mxr && leaf_pte[3]);
@@ -41,7 +43,7 @@ module sv32_data_check (
                                    ((data_rd_en && !data_wr_req) && !effective_read_ok) ||
                                    (data_wr_req && !leaf_pte[2]);
                 if (permission_fault) begin
-                    load_page_fault = data_rd_en;
+                    load_page_fault = data_rd_en && !data_wr_req;
                     store_page_fault = data_wr_req;
                 end else begin
                     update_accessed = (data_rd_en || data_wr_req) && !leaf_pte[6];
