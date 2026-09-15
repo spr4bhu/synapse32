@@ -12,6 +12,7 @@ module ID_EX(
     input wire [6:0] opcode_in,
     input wire [6:0] instr_id_in,
     input wire [31:0] pc_in,
+    input wire [31:0] instr_in,
     input wire [31:0] rs1_value_in,
     input wire [31:0] rs2_value_in,
     input wire instr_valid_in,
@@ -29,6 +30,7 @@ module ID_EX(
     output reg [6:0] opcode_out,
     output reg [6:0] instr_id_out,
     output reg [31:0] pc_out,
+    output reg [31:0] instr_out,
     output reg [31:0] rs1_value_out,
     output reg [31:0] rs2_value_out,
     output reg instr_valid_out,
@@ -46,6 +48,7 @@ module ID_EX(
             opcode_out <= 7'b0010011;
             instr_id_out <= INSTR_ADDI;
             pc_out <= 32'b0;
+            instr_out <= 32'h00000013;
             rs1_value_out <= 32'b0;
             rs2_value_out <= 32'b0;
             instr_valid_out <= 1'b0;
@@ -62,6 +65,7 @@ module ID_EX(
             opcode_out <= 7'b0010011;
             instr_id_out <= INSTR_ADDI;
             pc_out <= pc_in;        // Keep PC for correct program flow
+            instr_out <= 32'h00000013;
             rs1_value_out <= 32'b0;
             rs2_value_out <= 32'b0;
             instr_valid_out <= 1'b0;
@@ -77,6 +81,7 @@ module ID_EX(
             opcode_out <= opcode_out;
             instr_id_out <= instr_id_out;
             pc_out <= pc_out;
+            instr_out <= instr_out;
             rs1_value_out <= rs1_value_out;
             rs2_value_out <= rs2_value_out;
             instr_valid_out <= instr_valid_out;
@@ -94,6 +99,7 @@ module ID_EX(
             opcode_out <= 7'b0010011;
             instr_id_out <= INSTR_ADDI;
             pc_out <= pc_in;
+            instr_out <= 32'h00000013;
             rs1_value_out <= 32'b0;
             rs2_value_out <= 32'b0;
             instr_valid_out <= 1'b0;
@@ -109,6 +115,7 @@ module ID_EX(
             opcode_out <= opcode_in;
             instr_id_out <= instr_id_in;
             pc_out <= pc_in;
+            instr_out <= instr_in;
             rs1_value_out <= rs1_value_in;
             rs2_value_out <= rs2_value_in;
             instr_valid_out <= instr_valid_in;

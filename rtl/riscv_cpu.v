@@ -160,6 +160,7 @@ module riscv_cpu (
     wire [6:0] id_ex_inst0_opcode_out;
     wire [6:0] id_ex_inst0_instr_id_out;
     wire [31:0] id_ex_inst0_pc_out;
+    wire [31:0] id_ex_inst0_instr_out;
     wire [31:0] id_ex_inst0_rs1_value_out;
     wire [31:0] id_ex_inst0_rs2_value_out;
     wire id_ex_inst0_instr_valid_out;
@@ -184,6 +185,7 @@ module riscv_cpu (
         .opcode_in(decoder_inst0_opcode_out),
         .instr_id_in(decoder_inst0_instr_id_out),
         .pc_in(if_id_pc_out),
+        .instr_in(if_id_instr_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
         .instr_valid_in(if_id_instr_valid_out),
@@ -201,6 +203,7 @@ module riscv_cpu (
         .opcode_out(id_ex_inst0_opcode_out),
         .instr_id_out(id_ex_inst0_instr_id_out),
         .pc_out(id_ex_inst0_pc_out),
+        .instr_out(id_ex_inst0_instr_out),
         .rs1_value_out(id_ex_inst0_rs1_value_out),
         .rs2_value_out(id_ex_inst0_rs2_value_out),
         .instr_valid_out(id_ex_inst0_instr_valid_out),
@@ -453,6 +456,7 @@ module riscv_cpu (
         .rs2_valid(id_ex_inst0_rs2_valid_out),
         .instr_valid(id_ex_inst0_instr_valid_out),
         .pc_input(id_ex_inst0_pc_out),
+        .instr(id_ex_inst0_instr_out),
         .forward_a(forward_a),
         .forward_b(forward_b),
         .ex_mem_result(ex_mem_forward_result),

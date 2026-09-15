@@ -12,6 +12,7 @@ module execution_unit(
     input wire rs2_valid,
     input wire instr_valid,
     input wire [31:0] pc_input,
+    input wire [31:0] instr,
     
     // Data forwarding inputs
     input wire [1:0] forward_a,
@@ -529,6 +530,12 @@ always @(*) begin
             default: begin
             end
         endcase
+    end
+
+    // mtval/stval may hold the faulting instruction on an illegal-instruction
+    // trap (privileged spec 3.1.16); report it, as Spike does.
+    if (illegal_instruction_exception) begin
+        exception_tval = instr;
     end
 end
 
