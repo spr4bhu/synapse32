@@ -71,7 +71,7 @@ module sv32_mmu (
     reg [31:0] fill_pte;
     reg fill_megapage;
 
-    sv32_tlb #(.ENTRIES(32)) tlb_inst (
+    sv32_tlb tlb_inst (
         .clk(clk),
         .rst(rst),
         .flush(flush_tlb),
