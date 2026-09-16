@@ -268,10 +268,15 @@ module riscv_cpu (
     wire csr_trap_to_supervisor;
     wire [31:0] csr_exception_tval;
     wire wfi_instruction;
+    wire breakpoint_trigger_exception;
+    wire execute_trigger_hit;
+    wire [27:0] trigger_control;
+    wire [127:0] trigger_tdata2;
     wire instret_increment;
     wire [31:0] exception_pc;
     assign exception_pc = id_ex_inst0_pc_out;
     assign synchronous_exception_taken = ecall_exception || ebreak_exception ||
+                                         breakpoint_trigger_exception ||
                                          illegal_instruction_exception ||
                                          instruction_address_misaligned_exception ||
                                          load_address_misaligned_exception ||
@@ -295,6 +300,34 @@ module riscv_cpu (
     assign module_data_mxr_out = csr_file_inst.mstatus[19];
     assign module_instr_mmu_enable_out = (csr_file_inst.privilege_mode != PRIV_M) && csr_file_inst.satp[31];
     assign module_instr_privilege_out = csr_file_inst.privilege_mode;
+    // Sdtrig: a trigger fires only in a mode its own bit selects, and action-0 triggers must not
+    // fire while interrupts are disabled in that mode, or a handler would retrigger on itself
+    // (Sdtrig "Native Triggers", first solution: no tcontrol).
+    function trigger_enabled_in_mode;
+        input [6:0] control;
+        input [1:0] mode;
+        input machine_interrupts_enabled;
+        input supervisor_interrupts_enabled;
+        begin
+            trigger_enabled_in_mode =
+                (mode == PRIV_M) ? (control[6] && machine_interrupts_enabled) :
+                (mode == PRIV_S) ? (control[4] && supervisor_interrupts_enabled) :
+                                   control[3];
+        end
+    endfunction
+
+    wire breakpoint_delegated = csr_file_inst.medeleg[3];
+    wire [3:0] trigger_enabled = {
+        trigger_enabled_in_mode(trigger_control[27:21], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1]),
+        trigger_enabled_in_mode(trigger_control[20:14], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1]),
+        trigger_enabled_in_mode(trigger_control[13:7], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1]),
+        trigger_enabled_in_mode(trigger_control[6:0], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1])
+    };
+
     // Trap targets (privileged spec 3.1.7): exceptions enter at BASE; in vectored MODE (1)
     // interrupts enter at BASE + 4 * cause code.
     wire [31:0] mtvec_base = {csr_file_inst.mtvec[31:2], 2'b00};
@@ -439,7 +472,10 @@ module riscv_cpu (
         .instr_page_fault_exception(instr_stage_page_fault_taken),
         .load_page_fault_exception(mem_stage_load_page_fault),
         .store_page_fault_exception(mem_stage_store_page_fault),
+        .breakpoint_trigger_exception(breakpoint_trigger_exception),
         .exception_tval_in(csr_exception_tval),
+        .trigger_control(trigger_control),
+        .trigger_tdata2(trigger_tdata2),
         .instret_increment(instret_increment),
         .timer_interrupt(timer_interrupt),
         .software_interrupt(software_interrupt),
@@ -501,6 +537,9 @@ module riscv_cpu (
         .mstatus(csr_file_inst.mstatus),
         .mcounteren(csr_file_inst.mcounteren),
         .scounteren(csr_file_inst.scounteren),
+        .trigger_enabled(trigger_enabled),
+        .trigger_control(trigger_control),
+        .trigger_tdata2(trigger_tdata2),
         .interrupt_taken(interrupt_taken),
         .mret_instruction(mret_instruction),
         .sret_instruction(sret_instruction),
@@ -512,7 +551,9 @@ module riscv_cpu (
         .load_address_misaligned_exception(load_address_misaligned_exception),
         .store_address_misaligned_exception(store_address_misaligned_exception),
         .exception_tval(exception_tval),
-        .wfi_instruction(wfi_instruction)
+        .wfi_instruction(wfi_instruction),
+        .breakpoint_trigger_exception(breakpoint_trigger_exception),
+        .execute_trigger_hit(execute_trigger_hit)
     );
 
     // Memory Stage
@@ -759,7 +800,10 @@ module riscv_cpu (
          (mem_stage_store_page_fault && csr_file_inst.medeleg[15]));
     assign mem_stage_jump_addr = mem_stage_trap_to_supervisor ? stvec_base : mtvec_base;
 
-    assign instr_stage_page_fault_taken = id_ex_inst0_instr_page_fault_out && id_ex_inst0_instr_valid_out;
+    // An execute trigger is higher priority than the fetch page fault of the same instruction.
+    assign instr_stage_page_fault_taken = id_ex_inst0_instr_page_fault_out &&
+                                          id_ex_inst0_instr_valid_out &&
+                                          !execute_trigger_hit;
     assign instr_stage_trap_to_supervisor =
         (csr_file_inst.privilege_mode != PRIV_M) && csr_file_inst.medeleg[12];
     assign instr_stage_jump_addr = instr_stage_trap_to_supervisor ? stvec_base : mtvec_base;

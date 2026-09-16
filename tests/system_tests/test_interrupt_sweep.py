@@ -33,6 +33,7 @@ RESULT_HI = RESULT_LO + 4 * RESULT_WORDS
 DONE_ADDR = 0x1000_0300
 DONE_VALUE = 0x444F_4E45
 ACK_ADDR = 0x1000_0400
+TRIGGER_COUNT = 0x1000_0500
 M_SCRATCH = 0x1000_0800
 S_SCRATCH = 0x1000_0900
 PAGE_TABLE = 0x1001_0000
@@ -49,20 +50,29 @@ MEGAPAGES = {
 PTE_A_D = 0xC0
 
 SCENARIOS = ["control", "memory", "csr", "atomic", "muldiv", "exceptions", "fence"]
+# Label of each scenario's loop, used as the address of the execute trigger in trigger variants.
+SCENARIO_LOOP = {"control": "c_loop", "memory": "m_loop", "csr": "k_loop", "atomic": "a_loop",
+                 "muldiv": "d_loop", "exceptions": "e_loop", "fence": "f_loop"}
+CSR_TSELECT, CSR_TDATA1, CSR_TDATA2 = 0x7A0, 0x7A1, 0x7A2
+# mcontrol type 2, fires in M, S and U on execute.
+TDATA1_EXECUTE_ANY_MODE = (2 << 28) | (1 << 6) | (1 << 4) | (1 << 3) | (1 << 2)
 
-# name, privilege (3 = M, 1 = S), MMU on, source, mideleg, vectored mtvec/stvec, Svade (A/D clear)
+# name, privilege (3 = M, 1 = S), MMU on, source, mideleg, vectored mtvec/stvec, Svade (A/D clear),
+# execute trigger armed on the scenario loop
 VARIANTS = [
-    ("m_software", 3, 0, "software", 0x000, 0, 0),
-    ("m_external", 3, 0, "external", 0x000, 0, 0),
-    ("m_timer", 3, 0, "timer", 0x000, 0, 0),
-    ("s_software_delegated", 1, 0, "software", 0x002, 0, 0),
-    ("s_timer_delegated", 1, 0, "timer", 0x020, 0, 0),
-    ("s_mmu_external_delegated", 1, 1, "external", 0x200, 0, 0),
-    ("s_mmu_software_to_m", 1, 1, "software", 0x000, 0, 0),
-    ("m_timer_vectored", 3, 0, "timer", 0x000, 1, 0),
-    ("s_mmu_external_delegated_vectored", 1, 1, "external", 0x200, 1, 0),
-    ("s_mmu_timer_delegated_svade", 1, 1, "timer", 0x020, 0, 1),
-    ("s_mmu_software_to_m_svade", 1, 1, "software", 0x000, 0, 1),
+    ("m_software", 3, 0, "software", 0x000, 0, 0, 0),
+    ("m_external", 3, 0, "external", 0x000, 0, 0, 0),
+    ("m_timer", 3, 0, "timer", 0x000, 0, 0, 0),
+    ("s_software_delegated", 1, 0, "software", 0x002, 0, 0, 0),
+    ("s_timer_delegated", 1, 0, "timer", 0x020, 0, 0, 0),
+    ("s_mmu_external_delegated", 1, 1, "external", 0x200, 0, 0, 0),
+    ("s_mmu_software_to_m", 1, 1, "software", 0x000, 0, 0, 0),
+    ("m_timer_vectored", 3, 0, "timer", 0x000, 1, 0, 0),
+    ("s_mmu_external_delegated_vectored", 1, 1, "external", 0x200, 1, 0, 0),
+    ("s_mmu_timer_delegated_svade", 1, 1, "timer", 0x020, 0, 1, 0),
+    ("s_mmu_software_to_m_svade", 1, 1, "software", 0x000, 0, 1, 0),
+    ("m_software_trigger", 3, 0, "software", 0x000, 0, 0, 1),
+    ("s_mmu_external_delegated_trigger", 1, 1, "external", 0x200, 0, 0, 1),
 ]
 
 TRIAL_SLACK_CYCLES = 400
@@ -134,6 +144,13 @@ _start:
         li      t2, {SATP_SV32:#x}
         csrw    satp, t2
 2:
+        lw      t1, 28(t0)
+        beqz    t1, 5f
+        csrw    {CSR_TSELECT:#x}, zero
+        csrw    {CSR_TDATA2:#x}, t1
+        li      t2, {TDATA1_EXECUTE_ANY_MODE:#x}
+        csrw    {CSR_TDATA1:#x}, t2
+5:
         lw      t1, 0(t0)
         slli    t1, t1, 2
         la      t2, scenario_table
@@ -168,6 +185,16 @@ m_trap_saved:
         sw      t2, 8(sp)
         csrr    t0, mcause
         bltz    t0, m_irq
+        li      t1, 3
+        bne     t0, t1, m_not_breakpoint
+        # An armed execute trigger fires once; count it, disable it, retry the instruction.
+        li      t1, {TRIGGER_COUNT:#x}
+        lw      t2, 0(t1)
+        addi    t2, t2, 1
+        sw      t2, 0(t1)
+        csrw    {CSR_TDATA1:#x}, zero
+        j       m_ret
+m_not_breakpoint:
         li      t1, {CONFIG:#x}
         lw      t1, 24(t1)
         beqz    t1, m_skip
@@ -515,10 +542,12 @@ class Trial:
         self.interrupt_pcs = []
         self.bubble_interrupts = 0
         self.pte_writes = 0
+        self.trigger_hits = 0
 
 
-async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limit, want_entry=False):
-    _, privilege, mmu, source, mideleg, vectored, svade = variant
+async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limit, want_entry=False,
+                    trigger_addr=0):
+    _, privilege, mmu, source, mideleg, vectored, svade, _trigger = variant
     pin = {"software": dut.software_interrupt, "external": dut.external_interrupt}.get(source)
 
     dut.rst.value = 1
@@ -533,12 +562,14 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
     _poke(dut, CONFIG + 16, mideleg)
     _poke(dut, CONFIG + 20, vectored)
     _poke(dut, CONFIG + 24, svade)
+    _poke(dut, CONFIG + 28, trigger_addr)
     for va, flags in MEGAPAGES.items():
         _poke(dut, PAGE_TABLE + 4 * (va >> 22), ((va >> 12) << 10) | (flags & ~PTE_A_D if svade else flags))
     for index in range(RESULT_WORDS):
         _poke(dut, RESULT_LO + 4 * index, 0)
     _poke(dut, DONE_ADDR, 0)
     _poke(dut, ACK_ADDR, 0)
+    _poke(dut, TRIGGER_COUNT, 0)
     await ClockCycles(dut.clk, 2)
     dut.rst.value = 0
 
@@ -578,6 +609,7 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
             break
     await RisingEdge(dut.clk)
     trial.memory = [_peek(dut, RESULT_LO + 4 * index) for index in range(RESULT_WORDS)]
+    trial.trigger_hits = _peek(dut, TRIGGER_COUNT)
     dut.software_interrupt.value = 0
     dut.external_interrupt.value = 0
     return trial
@@ -613,11 +645,15 @@ async def sweep_variant(dut, variant):
     trial_count = 0
     for scenario_index, scenario in enumerate(SCENARIOS):
         entry = symbols[f"sc_{scenario}"]
-        reference = await run_trial(dut, scenario_index, variant, entry, None, 20000, want_entry=True)
+        trigger_addr = symbols[SCENARIO_LOOP[scenario]] if variant[7] else 0
+        reference = await run_trial(dut, scenario_index, variant, entry, None, 20000, want_entry=True,
+                                    trigger_addr=trigger_addr)
         assert reference.done_cycle is not None, f"{name}/{scenario}: reference run did not finish"
         assert reference.stores, f"{name}/{scenario}: reference run made no result stores"
         if variant[6]:
             assert reference.pte_writes > 0, f"{name}/{scenario}: no A/D page fault was taken with A/D clear"
+        if variant[7]:
+            assert reference.trigger_hits > 0, f"{name}/{scenario}: the armed execute trigger never fired"
         for offset, expected in _expected_absolute(scenario, variant[2]).items():
             actual = reference.memory[offset // 4]
             assert actual == expected, f"{name}/{scenario}: reference result @+{offset} = {actual:#x}, expected {expected:#x}"
@@ -625,7 +661,8 @@ async def sweep_variant(dut, variant):
         first = max(0, (reference.entry_cycle or 0) - 4)
         limit = reference.done_cycle + TRIAL_SLACK_CYCLES
         for inject in range(first, reference.done_cycle + 1):
-            trial = await run_trial(dut, scenario_index, variant, entry, inject, limit)
+            trial = await run_trial(dut, scenario_index, variant, entry, inject, limit,
+                                    trigger_addr=trigger_addr)
             trial_count += 1
             if trial.interrupt_pcs:
                 taken_trials += 1

@@ -26,10 +26,9 @@ NOT_APPLICABLE = {
     "rv32ui-p-ma_data": "Zicclsm (misaligned loads/stores) not implemented; core traps",
     "rv32mi-p-pmpaddr": "PMP not implemented; pmpaddr0/pmpcfg0 are plain registers",
 }
-# Pass/fail must match Spike, but the traces differ because the feature is optional.
-TRACE_NOT_COMPARABLE = {
-    "rv32mi-p-breakpoint": "Sdtrig is optional; the core has no triggers, so the test skips its trigger cases",
-}
+# Empty: every compared test's trace now matches Spike. A listed test's pass/fail must still match
+# Spike, only its trace is not compared; add one with a recorded reason.
+TRACE_NOT_COMPARABLE: dict[str, str] = {}
 
 
 def parse_suites(suites: str) -> set[str]:

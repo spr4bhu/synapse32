@@ -28,9 +28,15 @@ module csr_file (
     input wire instr_page_fault_exception,
     input wire load_page_fault_exception,
     input wire store_page_fault_exception,
+    input wire breakpoint_trigger_exception,
     input wire [31:0] exception_tval_in,
     input wire instret_increment,
     
+    // Trigger module state for the execution unit: 4 x {m, 0, s, u, execute, store, load}
+    // and the four tdata2 values, least significant slice first.
+    output wire [27:0] trigger_control,
+    output wire [127:0] trigger_tdata2,
+
     // Timer interrupt input
     input wire timer_interrupt,
     input wire software_interrupt,
@@ -75,7 +81,7 @@ module csr_file (
     localparam CSR_CYCLEH    = 12'hC80;
     localparam CSR_TIMEH     = 12'hC81;
     localparam CSR_INSTRETH  = 12'hC82;
-    // Trigger module CSRs (optional, not implemented — return 0, writes ignored)
+    // Trigger module CSRs (Sdtrig: 4 mcontrol type-2 triggers)
     localparam CSR_TSELECT   = 12'h7A0;
     localparam CSR_TDATA1    = 12'h7A1;
     localparam CSR_TDATA2    = 12'h7A2;
@@ -137,9 +143,19 @@ module csr_file (
     reg [31:0] satp;
     reg [31:0] pmpcfg0;
     reg [31:0] pmpaddr0;
+    // Sdtrig state. tdata1 holds only the fields this core supports; everything else
+    // reads back 0 (write-any-read-legal), so a write of 0 disables the trigger.
+    reg [1:0] tselect;
+    reg [6:0] trigger_ctl [0:3];   // {m, 0, s, u, execute, store, load}
+    reg [31:0] trigger_addr [0:3]; // tdata2
     reg ssip_software_pending;
     reg stip_software_pending;
     reg seip_software_pending;
+
+    localparam [3:0] TDATA1_TYPE_MCONTROL = 4'd2;
+    wire [31:0] tdata1_read = {TDATA1_TYPE_MCONTROL, 21'b0, trigger_ctl[tselect]};
+    assign trigger_control = {trigger_ctl[3], trigger_ctl[2], trigger_ctl[1], trigger_ctl[0]};
+    assign trigger_tdata2 = {trigger_addr[3], trigger_addr[2], trigger_addr[1], trigger_addr[0]};
 
     wire [31:0] sstatus = mstatus & SSTATUS_MASK;
     wire [31:0] sie = mie & S_INTERRUPT_MASK;
@@ -155,7 +171,8 @@ module csr_file (
                                  store_address_misaligned_exception ||
                                  instr_page_fault_exception ||
                                  load_page_fault_exception ||
-                                 store_page_fault_exception;
+                                 store_page_fault_exception ||
+                                 breakpoint_trigger_exception;
     wire [31:0] ecall_cause =
         (privilege_mode == PRIV_U) ? 32'h00000008 :
         (privilege_mode == PRIV_S) ? 32'h00000009 :
@@ -170,6 +187,7 @@ module csr_file (
         store_page_fault_exception                ? 32'h0000000F :
         instr_page_fault_exception                ? 32'h0000000C :
         instruction_address_misaligned_exception ? 32'h00000000 :
+        breakpoint_trigger_exception              ? 32'h00000003 :
         illegal_instruction_exception             ? 32'h00000002 :
         ebreak_exception                          ? 32'h00000003 :
         load_address_misaligned_exception         ? 32'h00000004 :
@@ -242,6 +260,15 @@ module csr_file (
             satp <= 32'h0;
             pmpcfg0 <= 32'h0;
             pmpaddr0 <= 32'h0;
+            tselect <= 2'b0;
+            trigger_ctl[0] <= 7'b0;
+            trigger_ctl[1] <= 7'b0;
+            trigger_ctl[2] <= 7'b0;
+            trigger_ctl[3] <= 7'b0;
+            trigger_addr[0] <= 32'h0;
+            trigger_addr[1] <= 32'h0;
+            trigger_addr[2] <= 32'h0;
+            trigger_addr[3] <= 32'h0;
             ssip_software_pending <= 1'b0;
             stip_software_pending <= 1'b0;
             seip_software_pending <= 1'b0;
@@ -367,6 +394,14 @@ module csr_file (
                         stip_software_pending <= write_data[5];
                         seip_software_pending <= write_data[9];
                     end
+                    // Only 4 triggers, so tselect is 2 bits wide (Sdtrig enumeration).
+                    CSR_TSELECT:  tselect <= write_data[1:0];
+                    // Supported mcontrol fields only: mode and access type. type stays 2,
+                    // dmode/select/timing/action/chain/match/maskmax/hit read back 0.
+                    CSR_TDATA1:   trigger_ctl[tselect] <= {write_data[6], 1'b0, write_data[4],
+                                                           write_data[3], write_data[2],
+                                                           write_data[1], write_data[0]};
+                    CSR_TDATA2:   trigger_addr[tselect] <= write_data;
                     CSR_PMPCFG0:  pmpcfg0 <= write_data;
                     CSR_PMPADDR0: pmpaddr0 <= write_data;
                     CSR_MCYCLE:   cycle_counter[31:0] <= write_data;
@@ -418,9 +453,9 @@ module csr_file (
                 CSR_INSTRETH: read_data = instret_counter[63:32];
                 CSR_PMPCFG0:  read_data = 32'h0;
                 CSR_PMPADDR0: read_data = 32'h0;
-                CSR_TSELECT:  read_data = 32'h0;
-                CSR_TDATA1:   read_data = 32'h0;
-                CSR_TDATA2:   read_data = 32'h0;
+                CSR_TSELECT:  read_data = {30'b0, tselect};
+                CSR_TDATA1:   read_data = tdata1_read;
+                CSR_TDATA2:   read_data = trigger_addr[tselect];
                 CSR_TDATA3:   read_data = 32'h0;
                 CSR_MVENDORID: read_data = 32'h0;
                 CSR_MARCHID:   read_data = 32'h0;
