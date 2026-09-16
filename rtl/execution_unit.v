@@ -566,6 +566,12 @@ always @(*) begin
                         jump_addr = trap_to_supervisor ? stvec : mtvec;
                         flush_pipeline = 1;
                         illegal_instruction_exception = 1;
+                    end else begin
+                        // Instructions after the fence must use the new translations, so anything
+                        // already fetched speculatively is discarded and fetched again.
+                        jump_signal = 1;
+                        jump_addr = pc_input + 4;
+                        flush_pipeline = 1;
                     end
                 end
                 default: begin
