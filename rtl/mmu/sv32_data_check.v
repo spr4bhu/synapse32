@@ -41,13 +41,14 @@ module sv32_data_check (
                                    ((privilege_mode == PRIV_U) && !leaf_pte[4]) ||
                                    ((privilege_mode == PRIV_S) && leaf_pte[4] && !sum) ||
                                    ((data_rd_en && !data_wr_req) && !effective_read_ok) ||
-                                   (data_wr_req && !leaf_pte[2]);
+                                   (data_wr_req && !leaf_pte[2]) ||
+                                   // Svade: A clear, or D clear on a write, faults;
+                                   // software sets the bits (privileged spec 4.3.1).
+                                   !leaf_pte[6] ||
+                                   (data_wr_req && !leaf_pte[7]);
                 if (permission_fault) begin
                     load_page_fault = data_rd_en && !data_wr_req;
                     store_page_fault = data_wr_req;
-                end else begin
-                    update_accessed = (data_rd_en || data_wr_req) && !leaf_pte[6];
-                    update_dirty = data_wr_req && !leaf_pte[7];
                 end
             end
         end

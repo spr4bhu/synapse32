@@ -6,6 +6,9 @@ raised at that cycle. Stores and final memory must match the reference.
 Vectored variants set MODE 1 in mtvec and stvec. Every vector-table entry checks that it matches the
 trap it was reached by, so a wrong entry hangs the reference run instead of being absorbed by the
 common handler.
+
+Svade variants start every trial with A and D clear in the megapages, so page faults go to the M-mode
+handler, which sets A (and D for a store/AMO fault) and retries. Interrupts land in and around them.
 """
 
 import os
@@ -43,20 +46,23 @@ MEGAPAGES = {
     DATA_MEM_BASE: 0xCF,
     0x0200_0000: 0xC7,
 }
+PTE_A_D = 0xC0
 
 SCENARIOS = ["control", "memory", "csr", "atomic", "muldiv", "exceptions", "fence"]
 
-# name, privilege (3 = M, 1 = S), MMU on, source, mideleg, vectored mtvec/stvec
+# name, privilege (3 = M, 1 = S), MMU on, source, mideleg, vectored mtvec/stvec, Svade (A/D clear)
 VARIANTS = [
-    ("m_software", 3, 0, "software", 0x000, 0),
-    ("m_external", 3, 0, "external", 0x000, 0),
-    ("m_timer", 3, 0, "timer", 0x000, 0),
-    ("s_software_delegated", 1, 0, "software", 0x002, 0),
-    ("s_timer_delegated", 1, 0, "timer", 0x020, 0),
-    ("s_mmu_external_delegated", 1, 1, "external", 0x200, 0),
-    ("s_mmu_software_to_m", 1, 1, "software", 0x000, 0),
-    ("m_timer_vectored", 3, 0, "timer", 0x000, 1),
-    ("s_mmu_external_delegated_vectored", 1, 1, "external", 0x200, 1),
+    ("m_software", 3, 0, "software", 0x000, 0, 0),
+    ("m_external", 3, 0, "external", 0x000, 0, 0),
+    ("m_timer", 3, 0, "timer", 0x000, 0, 0),
+    ("s_software_delegated", 1, 0, "software", 0x002, 0, 0),
+    ("s_timer_delegated", 1, 0, "timer", 0x020, 0, 0),
+    ("s_mmu_external_delegated", 1, 1, "external", 0x200, 0, 0),
+    ("s_mmu_software_to_m", 1, 1, "software", 0x000, 0, 0),
+    ("m_timer_vectored", 3, 0, "timer", 0x000, 1, 0),
+    ("s_mmu_external_delegated_vectored", 1, 1, "external", 0x200, 1, 0),
+    ("s_mmu_timer_delegated_svade", 1, 1, "timer", 0x020, 0, 1),
+    ("s_mmu_software_to_m_svade", 1, 1, "software", 0x000, 0, 1),
 ]
 
 TRIAL_SLACK_CYCLES = 400
@@ -152,14 +158,41 @@ scenario_table:
         .word   sc_control, sc_memory, sc_csr, sc_atomic, sc_muldiv, sc_exceptions, sc_fence
 
 # ---- Machine-mode trap handler
+# In Svade variants a page fault on a mapped megapage sets A (and D for cause 15) and retries.
         .align  2
 m_trap:
         csrrw   sp, mscratch, sp
         sw      t0, 0(sp)
 m_trap_saved:
         sw      t1, 4(sp)
+        sw      t2, 8(sp)
         csrr    t0, mcause
         bltz    t0, m_irq
+        li      t1, {CONFIG:#x}
+        lw      t1, 24(t1)
+        beqz    t1, m_skip
+        li      t1, 12
+        beq     t0, t1, m_ad
+        li      t1, 13
+        beq     t0, t1, m_ad
+        li      t1, 15
+        bne     t0, t1, m_skip
+m_ad:
+        csrr    t1, mtval
+        srli    t1, t1, 22
+        slli    t1, t1, 2
+        li      t2, {PAGE_TABLE:#x}
+        add     t1, t1, t2
+        lw      t2, 0(t1)
+        beqz    t2, m_skip
+        ori     t2, t2, 0x40
+        addi    t0, t0, -15
+        bnez    t0, 1f
+        ori     t2, t2, 0x80
+1:
+        sw      t2, 0(t1)
+        j       m_ret
+m_skip:
         csrr    t0, mepc
         addi    t0, t0, 4
         csrw    mepc, t0
@@ -176,6 +209,7 @@ m_timer:
         li      t1, -1
         sw      t1, 0(t0)
 m_ret:
+        lw      t2, 8(sp)
         lw      t1, 4(sp)
         lw      t0, 0(sp)
         csrrw   sp, mscratch, sp
@@ -480,10 +514,11 @@ class Trial:
         self.entry_cycle = None
         self.interrupt_pcs = []
         self.bubble_interrupts = 0
+        self.pte_writes = 0
 
 
 async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limit, want_entry=False):
-    _, privilege, mmu, source, mideleg, vectored = variant
+    _, privilege, mmu, source, mideleg, vectored, svade = variant
     pin = {"software": dut.software_interrupt, "external": dut.external_interrupt}.get(source)
 
     dut.rst.value = 1
@@ -497,6 +532,9 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
     _poke(dut, CONFIG + 12, timer_target)
     _poke(dut, CONFIG + 16, mideleg)
     _poke(dut, CONFIG + 20, vectored)
+    _poke(dut, CONFIG + 24, svade)
+    for va, flags in MEGAPAGES.items():
+        _poke(dut, PAGE_TABLE + 4 * (va >> 22), ((va >> 12) << 10) | (flags & ~PTE_A_D if svade else flags))
     for index in range(RESULT_WORDS):
         _poke(dut, RESULT_LO + 4 * index, 0)
     _poke(dut, DONE_ADDR, 0)
@@ -521,7 +559,8 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
         await ReadOnly()
         if want_entry and trial.entry_cycle is None and int(dut.pc_debug.value) == entry_addr:
             trial.entry_cycle = cycle
-        if int(dut.cpu_mem_write_en.value):
+        # A store that raises a page fault is not committed (it is retried after the handler).
+        if int(dut.cpu_mem_write_en.value) and not int(dut.cpu_store_page_fault.value):
             addr = int(dut.cpu_mem_write_addr.value)
             if RESULT_LO <= addr < RESULT_HI:
                 trial.stores.append((addr, int(dut.cpu_mem_write_data.value), int(dut.cpu_write_byte_enable.value)))
@@ -529,6 +568,8 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
                 lower_pin = True
             elif addr == DONE_ADDR and int(dut.cpu_mem_write_data.value) == DONE_VALUE:
                 trial.done_cycle = cycle
+            elif PAGE_TABLE <= addr < PAGE_TABLE + 0x1000:
+                trial.pte_writes += 1
         if watch_taken and int(dut.cpu_inst.interrupt_taken_qualified.value):
             trial.interrupt_pcs.append(int(dut.cpu_inst.interrupt_pc.value))
             if not int(dut.cpu_inst.id_ex_inst0_instr_valid_out.value) and int(dut.cpu_inst.if_id_instr_valid_out.value):
@@ -575,6 +616,8 @@ async def sweep_variant(dut, variant):
         reference = await run_trial(dut, scenario_index, variant, entry, None, 20000, want_entry=True)
         assert reference.done_cycle is not None, f"{name}/{scenario}: reference run did not finish"
         assert reference.stores, f"{name}/{scenario}: reference run made no result stores"
+        if variant[6]:
+            assert reference.pte_writes > 0, f"{name}/{scenario}: no A/D page fault was taken with A/D clear"
         for offset, expected in _expected_absolute(scenario, variant[2]).items():
             actual = reference.memory[offset // 4]
             assert actual == expected, f"{name}/{scenario}: reference result @+{offset} = {actual:#x}, expected {expected:#x}"

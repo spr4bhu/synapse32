@@ -17,13 +17,14 @@ module sv32_instr_check (
         update_accessed = 1'b0;
 
         if (translate_enable) begin
+            // Svade: a fetch from a page whose A bit is clear faults; software
+            // sets A (privileged spec 4.3.1). update_accessed stays 0.
             if (!addr_valid_in ||
                 !leaf_pte[3] ||
                 ((privilege_mode == PRIV_U) && !leaf_pte[4]) ||
-                ((privilege_mode == PRIV_S) && leaf_pte[4])) begin
+                ((privilege_mode == PRIV_S) && leaf_pte[4]) ||
+                !leaf_pte[6]) begin
                 page_fault = 1'b1;
-            end else if (!leaf_pte[6]) begin
-                update_accessed = 1'b1;
             end
         end
     end
