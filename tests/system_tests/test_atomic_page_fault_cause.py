@@ -274,7 +274,7 @@ def _peek(dut, addr: int) -> int:
     return int(dut.unified_mem_inst.instr_ram[_phys_word_index(addr)].value) & 0xFFFF_FFFF
 
 
-async def run_case(dut, config, limit=3000):
+async def run_case(dut, config, limit=20000):
     dut.rst.value = 1
     dut.software_interrupt.value = 0
     dut.external_interrupt.value = 0

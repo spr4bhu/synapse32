@@ -30,6 +30,7 @@ module mem_adapter #(
     output wire [31:0] rdata,
 
     // Storage side
+    output wire store_req,
     output wire [31:0] store_addr,
     output wire store_we,
     output wire [3:0] store_be,
@@ -43,6 +44,7 @@ module mem_adapter #(
             assign gnt = req;
             assign rvalid = req;
             assign rdata = store_rdata;
+            assign store_req = req;
             assign store_addr = addr;
             assign store_we = we;
             assign store_be = be;
@@ -110,6 +112,7 @@ module mem_adapter #(
                 end
             end
 
+            assign store_req = busy || accept;
             assign store_addr = busy ? addr_q : addr;
             assign store_we = busy ? we_q : we;
             assign store_be = busy ? be_q : be;
