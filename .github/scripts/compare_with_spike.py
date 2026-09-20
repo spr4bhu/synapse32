@@ -20,7 +20,18 @@ from pathlib import Path
 
 DEFAULT_SUITES = "rv32ui,rv32um,rv32ua,rv32mi,rv32si"
 TEST_NAME_RE = re.compile(r"^(rv32(ui|um|ua|mi|si))-p-[A-Za-z0-9_-]+$")
-SPIKE_ISA = "rv32ima_zicsr_zicntr"
+# Spike v1.1.0 predates the Zicntr name; its counters are always present.
+SPIKE_ISA = "rv32ima_zicsr"
+NOT_APPLICABLE = {
+    "rv32ui-p-ma_data": "Zicclsm (misaligned loads/stores) not implemented; core traps",
+    "rv32mi-p-pmpaddr": "PMP not implemented; pmpaddr0/pmpcfg0 are plain registers",
+}
+# Pass/fail must match Spike, but the traces differ because the feature is optional.
+TRACE_NOT_COMPARABLE = {
+    "rv32mi-p-breakpoint": "Sdtrig is optional; the core has no triggers, so the test skips its trigger cases",
+    "rv32mi-p-illegal": "mtvec is WARL; the core supports direct mode only, so the test skips its vectored part",
+    "rv32si-p-dirty": "A/D bits: the core updates them in hardware, Spike 1.1.0 traps and the handler sets D",
+}
 
 
 def parse_suites(suites: str) -> set[str]:
@@ -79,6 +90,16 @@ def tohost_addr(elf: Path) -> int:
     raise RuntimeError(f"tohost symbol not found in {elf}")
 
 
+def entry_address(elf: Path) -> int:
+    rc = run(["riscv64-unknown-elf-readelf", "-h", str(elf)])
+    if rc.returncode != 0:
+        raise RuntimeError(f"readelf failed for {elf}:\n{rc.stderr}")
+    match = re.search(r"Entry point address:\s+0x([0-9a-f]+)", rc.stdout)
+    if not match:
+        raise RuntimeError(f"no entry point in {elf}")
+    return int(match.group(1), 16)
+
+
 def elf_to_hex(elf: Path, out_hex: Path) -> None:
     out_hex.parent.mkdir(parents=True, exist_ok=True)
     bin_file = out_hex.with_suffix(".bin")
@@ -102,8 +123,103 @@ def elf_to_hex(elf: Path, out_hex: Path) -> None:
         raise RuntimeError(f"objcopy verilog failed for {elf}:\n{rc.stderr}")
 
 
-def run_spike(elf: Path) -> tuple[bool, str]:
-    rc = run(["spike", "--isa=" + SPIKE_ISA, str(elf)])
+# Implementation-defined values: counters and mvendorid/marchid/mimpid.
+IMPLEMENTATION_DEFINED_CSRS = {
+    0xC00, 0xC01, 0xC02, 0xC80, 0xC81, 0xC82, 0xB00, 0xB02, 0xB80, 0xB82,
+    0xF11, 0xF12, 0xF13,
+}
+SPIKE_COMMIT_RE = re.compile(r"^core\s+\d+:\s+\d\s+0x([0-9a-f]+)\s+\(0x([0-9a-f]+)\)(.*)$")
+
+
+def reads_implementation_defined_csr(insn: int) -> bool:
+    return (insn & 0x7F) == 0x73 and ((insn >> 12) & 0x7) not in (0, 4) and (insn >> 20) in IMPLEMENTATION_DEFINED_CSRS
+
+
+def store_width(insn: int) -> int:
+    opcode = insn & 0x7F
+    if opcode == 0x23:  # sb/sh/sw
+        return 1 << ((insn >> 12) & 0x3)
+    if opcode == 0x2F:  # sc.w / amo*.w
+        return 4
+    raise ValueError(f"memory write from non-store instruction 0x{insn:08x}")
+
+
+def parse_spike_commits(path: Path, entry_pc: int, tohost: int) -> tuple[list[tuple], list[tuple]]:
+    registers, memory = [], []
+    started = False
+    for commit, line in enumerate(path.read_text(errors="replace").splitlines()):
+        match = SPIKE_COMMIT_RE.match(line)
+        if not match:
+            continue
+        pc, insn = int(match.group(1), 16), int(match.group(2), 16)
+        started = started or pc == entry_pc  # skip Spike's boot ROM
+        if not started:
+            continue
+        tokens = re.sub(r"\bx\s+(\d+)\b", r"x\1", match.group(3)).split()
+        writes, bytes_written = [], []
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if re.fullmatch(r"x\d+", token) and i + 1 < len(tokens):
+                writes.append((pc, int(token[1:]), int(tokens[i + 1], 16) & 0xFFFFFFFF, insn, reads_implementation_defined_csr(insn), commit))
+                i += 2
+            elif token == "mem" and i + 1 < len(tokens):
+                address = int(tokens[i + 1], 16)
+                if i + 2 < len(tokens) and re.fullmatch(r"0x[0-9a-f]+", tokens[i + 2]):
+                    value = int(tokens[i + 2], 16)
+                    for index in range(store_width(insn)):
+                        bytes_written.append((pc, (address + index) & 0xFFFFFFFF, (value >> (8 * index)) & 0xFF, insn, False, commit))
+                    i += 3
+                else:
+                    i += 2
+            else:
+                i += 1
+        if any(entry[1] == tohost for entry in bytes_written):
+            break
+        registers += writes
+        memory += bytes_written
+    return registers, memory
+
+
+def parse_rtl_trace(path: Path, tohost: int) -> tuple[list[tuple], list[tuple]]:
+    registers, memory = [], []
+    for line in path.read_text().splitlines():
+        fields = line.split()
+        if fields[0] == "x":
+            registers.append((int(fields[1], 16), int(fields[2]), int(fields[3], 16)))
+        elif int(fields[2], 16) == tohost:
+            break
+        else:
+            memory.append((int(fields[1], 16), int(fields[2], 16), int(fields[3], 16)))
+    return registers, memory
+
+
+def first_divergence(name: str, spike: list[tuple], rtl: list[tuple]) -> tuple[float, str] | None:
+    for index in range(max(len(spike), len(rtl))):
+        if index >= len(spike):
+            pc, where, value = rtl[index]
+            order = spike[-1][5] + 0.5 if spike else 0
+            return order, f"{name} {index}: only RTL has pc 0x{pc:08x} {where:#x}={value:#x} (Spike {len(spike)} entries, RTL {len(rtl)})"
+        s_pc, s_where, s_value, insn, may_differ, commit = spike[index]
+        if index >= len(rtl):
+            return commit, f"{name} {index}: only Spike has pc 0x{s_pc:08x} (insn 0x{insn:08x}) {s_where:#x}={s_value:#x} (Spike {len(spike)} entries, RTL {len(rtl)})"
+        r_pc, r_where, r_value = rtl[index]
+        if (s_pc, s_where) != (r_pc, r_where) or (s_value != r_value and not may_differ):
+            return commit, (
+                f"{name} {index}: Spike pc 0x{s_pc:08x} (insn 0x{insn:08x}) {s_where:#x}={s_value:#x}, "
+                f"RTL pc 0x{r_pc:08x} {r_where:#x}={r_value:#x}"
+            )
+    return None
+
+
+def compare_traces(spike: tuple, rtl: tuple) -> str | None:
+    found = [d for d in (first_divergence("register write", spike[0], rtl[0]),
+                         first_divergence("memory write", spike[1], rtl[1])) if d]
+    return min(found)[1] if found else None
+
+
+def run_spike(elf: Path, commit_log: Path) -> tuple[bool, str]:
+    rc = run(["spike", "--isa=" + SPIKE_ISA, "-l", "--log-commits", f"--log={commit_log}", str(elf)])
     ok = rc.returncode == 0
     detail = (rc.stdout + "\n" + rc.stderr).strip()
     return ok, detail
@@ -117,6 +233,7 @@ def run_verilator(
     tohost: int,
     max_cycles: int,
     compile_model: bool,
+    trace_file: Path,
 ) -> tuple[bool, str]:
     # The image is read by the RTL at simulator start.  Keep the Verilog
     # define and build directory constant, changing only the file contents.
@@ -129,6 +246,7 @@ def run_verilator(
     env["ISA_FORCE_COMPILE"] = "1" if compile_model else "0"
     env["ISA_TOHOST_ADDR"] = hex(tohost)
     env["ISA_MAX_CYCLES"] = str(max_cycles)
+    env["ISA_TRACE_FILE"] = str(trace_file)
     rc = run([sys.executable, "tests/system_tests/test_riscv_isa.py"], env=env, cwd=repo_root)
     ok = rc.returncode == 0
     detail = (rc.stdout + "\n" + rc.stderr).strip()
@@ -165,15 +283,27 @@ def main() -> int:
     out_hex_dir = repo_root / ".github" / "artifacts" / "isa" / "build_hex"
     runtime_hex = repo_root / ".github" / "artifacts" / "isa" / "runtime.hex"
     sim_build = repo_root / ".github" / "artifacts" / "isa" / "sim_build_riscv_isa"
+    trace_dir = repo_root / ".github" / "artifacts" / "isa" / "traces"
+    trace_dir.mkdir(parents=True, exist_ok=True)
     results = []
     mismatches = []
+    skipped = []
+    trace_not_comparable = []
+    model_compiled = False
 
-    for index, elf in enumerate(tests):
+    for elf in tests:
+        if elf.name in NOT_APPLICABLE:
+            skipped.append({"test": elf.name, "reason": NOT_APPLICABLE[elf.name]})
+            print(f"[{elf.name}] SKIPPED: {NOT_APPLICABLE[elf.name]}")
+            continue
         try:
             th = tohost_addr(elf)
             hex_file = out_hex_dir / f"{elf.name}.hex"
             elf_to_hex(elf, hex_file)
-            spike_ok, spike_log = run_spike(elf)
+            spike_commits = trace_dir / f"{elf.name}.spike.log"
+            rtl_trace = trace_dir / f"{elf.name}.rtl.trace"
+            rtl_trace.unlink(missing_ok=True)
+            spike_ok, spike_log = run_spike(elf, spike_commits)
             verilator_ok, verilator_log = run_verilator(
                 repo_root,
                 hex_file,
@@ -181,16 +311,30 @@ def main() -> int:
                 sim_build,
                 th,
                 args.max_cycles,
-                compile_model=index == 0,
+                compile_model=not model_compiled,
+                trace_file=rtl_trace,
             )
-            same = spike_ok == verilator_ok
+            model_compiled = True
+            if elf.name in TRACE_NOT_COMPARABLE:
+                divergence = None
+                trace_not_comparable.append({"test": elf.name, "reason": TRACE_NOT_COMPARABLE[elf.name]})
+            elif rtl_trace.is_file() and spike_commits.is_file():
+                divergence = compare_traces(
+                    parse_spike_commits(spike_commits, entry_address(elf), th), parse_rtl_trace(rtl_trace, th)
+                )
+            else:
+                divergence = "commit trace missing"
+            same = spike_ok == verilator_ok and divergence is None
             rec = {
                 "test": elf.name,
                 "spike_pass": spike_ok,
                 "verilator_pass": verilator_ok,
+                "trace_match": divergence is None if elf.name not in TRACE_NOT_COMPARABLE else None,
                 "match": same,
                 "tohost": f"0x{th:x}",
             }
+            if divergence:
+                rec["trace_divergence"] = divergence
             results.append(rec)
             if not same:
                 mismatches.append(
@@ -200,7 +344,10 @@ def main() -> int:
                         "verilator_log_tail": verilator_log[-8000:],
                     }
                 )
-            print(f"[{elf.name}] spike={spike_ok} verilator={verilator_ok} match={same}")
+            trace = "not comparable" if elf.name in TRACE_NOT_COMPARABLE else divergence is None
+            print(f"[{elf.name}] spike={spike_ok} verilator={verilator_ok} trace={trace} match={same}")
+            if divergence:
+                print(f"    first divergence: {divergence}")
         except Exception as exc:
             rec = {
                 "test": elf.name,
@@ -217,6 +364,8 @@ def main() -> int:
         "total": len(results),
         "matches": len([r for r in results if r.get("match")]),
         "mismatches": len(mismatches),
+        "skipped": skipped,
+        "trace_not_comparable": trace_not_comparable,
         "results": results,
         "mismatch_details": mismatches,
     }

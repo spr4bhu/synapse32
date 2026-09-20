@@ -4,6 +4,7 @@ Environment variables:
   ISA_HEX_FILE      : absolute path to verilog-hex image
   ISA_TOHOST_ADDR   : tohost symbol address (hex, e.g. 0x80001000)
   ISA_MAX_CYCLES    : optional max cycles (default: 200000)
+  ISA_TRACE_FILE    : optional commit trace output, compared with Spike's commit log
 """
 import os
 import shutil
@@ -12,7 +13,7 @@ from pathlib import Path
 import cocotb
 import pytest
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge
+from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge
 from cocotb_test.simulator import run
 
 
@@ -40,8 +41,29 @@ async def test_riscv_isa_image(dut):
     await ClockCycles(dut.clk, 5)
     dut.rst.value = 0
 
+    trace_path = os.environ.get("ISA_TRACE_FILE")
+    trace = open(trace_path, "w") if trace_path else None
+
     for cycle in range(max_cycles):
         await RisingEdge(dut.clk)
+        if trace is not None:
+            await ReadOnly()
+            if int(dut.cpu_inst.rf_inst0_wr_en.value) and int(dut.cpu_inst.rf_inst0_rd_in.value):
+                trace.write(
+                    f"x {int(dut.cpu_inst.mem_wb_inst0_pc_out.value):08x} {int(dut.cpu_inst.rf_inst0_rd_in.value)} "
+                    f"{int(dut.cpu_inst.rf_inst0_rd_value_in.value) & 0xFFFFFFFF:08x}\n"
+                )
+            if int(dut.cpu_mem_write_en.value) and not int(dut.cpu_store_page_fault.value):
+                store_pc = int(dut.cpu_inst.ex_mem_inst0_pc_out.value)
+                store_addr = int(dut.cpu_mem_write_addr.value)
+                store_data = int(dut.cpu_mem_write_data.value)
+                byte_enable = int(dut.cpu_write_byte_enable.value)
+                for index in range(4):
+                    if byte_enable & (1 << index):
+                        trace.write(
+                            f"m {store_pc:08x} {(store_addr + index) & 0xFFFFFFFF:08x} "
+                            f"{(store_data >> (8 * index)) & 0xFF:02x}\n"
+                        )
         if trace_isa:
             cocotb.log.info(
                 "cycle=%d pc=%#x priv=%#x mepc=%#x mcause=%#x mtval=%#x satp=%#x "
@@ -74,9 +96,13 @@ async def test_riscv_isa_image(dut):
             data = int(dut.cpu_mem_write_data.value) & 0xFFFFFFFF
             if addr == tohost_addr and (data & 1):
                 # riscv-tests convention: 1 = pass, else fail code in upper bits.
+                if trace is not None:
+                    trace.close()
                 assert data == 1, f"ISA test reported failure via tohost: 0x{data:08x}"
                 return
 
+    if trace is not None:
+        trace.close()
     assert False, f"ISA test did not finish within {max_cycles} cycles"
 
 

@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         patchutils \
         picolibc-riscv64-unknown-elf \
         python3 \
+        python3-dev \
         python3-venv \
         texinfo \
         verilator \
@@ -51,15 +52,18 @@ RUN git clone --depth 1 --branch "$SPIKE_VERSION" \
         https://github.com/riscv-software-src/riscv-isa-sim.git /tmp/riscv-isa-sim && \
     mkdir /tmp/riscv-isa-sim/build && \
     cd /tmp/riscv-isa-sim/build && \
-    ../configure CXXFLAGS="-include cstdint" --prefix=/opt/spike && \
+    ../configure CXXFLAGS="-include cstdint" --prefix=/opt/spike --enable-commitlog && \
     make -j"$(nproc)" && \
     make install && \
     rm -rf /tmp/riscv-isa-sim
 
-RUN git clone --depth 1 --recurse-submodules \
-        https://github.com/riscv-software-src/riscv-tests.git "$RISCV_TESTS_DIR" && \
+# A shallow clone only holds the branch tip, so fetch the pinned commit itself.
+RUN git init "$RISCV_TESTS_DIR" && \
     cd "$RISCV_TESTS_DIR" && \
-    git checkout "$RISCV_TESTS_VERSION" && \
+    git remote add origin https://github.com/riscv-software-src/riscv-tests.git && \
+    git fetch --depth 1 origin "$RISCV_TESTS_VERSION" && \
+    git checkout FETCH_HEAD && \
+    git submodule update --init --depth 1 --recursive && \
     autoconf && \
     ./configure --prefix="$RISCV_TESTS_DIR/install" && \
     cd isa && \

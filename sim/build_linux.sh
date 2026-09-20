@@ -127,6 +127,42 @@ write_config_string() {
     printf '%s="%s"\n' "$symbol" "$value" >> "$config_file"
 }
 
+# merge_config.sh only warns when a requested symbol does not survive olddefconfig.
+verify_kconfig() {
+    local config_file="$1"
+    shift
+    local fragment line symbol final mismatches=0
+
+    for fragment in "$@"; do
+        while IFS= read -r line; do
+            case "$line" in
+                CONFIG_*=*)
+                    symbol="${line%%=*}"
+                    final="$(grep -E "^${symbol}=" "$config_file" || true)"
+                    if [ "$final" != "$line" ]; then
+                        echo "Kconfig: requested '$line', final '${final:-unset}'" >&2
+                        mismatches=$((mismatches + 1))
+                    fi
+                    ;;
+                "# CONFIG_"*" is not set")
+                    symbol="${line#\# }"
+                    symbol="${symbol% is not set}"
+                    final="$(grep -E "^${symbol}=" "$config_file" || true)"
+                    if [ -n "$final" ]; then
+                        echo "Kconfig: requested '$symbol' disabled, final '$final'" >&2
+                        mismatches=$((mismatches + 1))
+                    fi
+                    ;;
+            esac
+        done < "$fragment"
+    done
+
+    if [ "$mismatches" -ne 0 ]; then
+        echo "$mismatches requested kernel config values were not applied" >&2
+        exit 1
+    fi
+}
+
 apply_disable_list() {
     local config_file="$1"
     shift
@@ -196,6 +232,13 @@ clone_or_update "$LINUX_REPO" "$LINUX_VERSION" "$LINUX_DIR"
 clone_or_update "$OPENSBI_REPO" "$OPENSBI_VERSION" "$OPENSBI_DIR"
 clone_or_update "$BUSYBOX_REPO" "$BUSYBOX_VERSION" "$BUSYBOX_DIR"
 patch_linux_source
+
+# Reproducible build (Documentation/kbuild/reproducible-builds.rst).
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$LINUX_DIR" log -1 --format=%ct)}"
+KBUILD_BUILD_TIMESTAMP="${KBUILD_BUILD_TIMESTAMP:-$(LC_ALL=C date -u -d "@$SOURCE_DATE_EPOCH")}"
+KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-synapse32}"
+KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-synapse32}"
+export SOURCE_DATE_EPOCH KBUILD_BUILD_TIMESTAMP KBUILD_BUILD_USER KBUILD_BUILD_HOST
 
 echo "==> Preparing initramfs root..."
 rm -rf "$ROOTFS_DIR"
@@ -477,16 +520,15 @@ common_disable_symbols=(
     CONFIG_BPF_SYSCALL
     CONFIG_CGROUPS
     CONFIG_CGROUP_PERF
-    CONFIG_FUTEX_PI
     CONFIG_KALLSYMS
     CONFIG_PROFILING
     CONFIG_PERF_EVENTS
-    CONFIG_DEBUG_KERNEL
     CONFIG_DEBUG_MISC
     CONFIG_DEBUG_LIST
     CONFIG_DEBUG_PLIST
     CONFIG_DEBUG_VM_PGTABLE
     CONFIG_DEBUG_FS
+    CONFIG_FW_LOADER_DEBUG
     CONFIG_TEST_KSTRTOX
     CONFIG_TEST_PRINTF
     CONFIG_KUNIT
@@ -495,6 +537,7 @@ common_disable_symbols=(
     CONFIG_ARCH_SUNXI
     CONFIG_ARCH_THEAD
     CONFIG_ARCH_VIRT
+    CONFIG_SOC_VIRT
     CONFIG_ARCH_CANAAN
     CONFIG_ARCH_SIFIVE
     CONFIG_SOC_STARFIVE
@@ -514,9 +557,10 @@ common_disable_symbols=(
     CONFIG_DNS_RESOLVER
     CONFIG_NET
     CONFIG_SCSI
-    CONFIG_SCSI_MOD
     CONFIG_BLK_DEV
     CONFIG_BTRFS_FS
+    CONFIG_EXT4_FS
+    CONFIG_JBD2
     CONFIG_ATA
     CONFIG_MD
     CONFIG_BLK_DEV_MD
@@ -538,7 +582,6 @@ common_disable_symbols=(
     CONFIG_USB_UAS
     CONFIG_USB_STORAGE
     CONFIG_USB_HID
-    CONFIG_USB_OHCI_LITTLE_ENDIAN
     CONFIG_PCI
     CONFIG_PCI_DOMAINS
     CONFIG_OF_PCI
@@ -611,6 +654,13 @@ common_disable_symbols=(
     CONFIG_CRYPTO_SHA3
     CONFIG_CRYPTO_BLAKE2B
     CONFIG_CRYPTO_JITTERENTROPY
+    CONFIG_CRYPTO_RSA
+    CONFIG_CRYPTO_SHA1
+    CONFIG_CRYPTO_SHA256
+    CONFIG_CRYPTO_SHA512
+    CONFIG_CRYPTO_CRC32C
+    CONFIG_CRYPTO_XXHASH
+    CONFIG_LIBCRC32C
     CONFIG_KEYS
     CONFIG_INTEGRITY
     CONFIG_SECURITY
@@ -626,7 +676,6 @@ common_disable_symbols=(
     CONFIG_VIRTUALIZATION
     CONFIG_IOMMU_SUPPORT
     CONFIG_DMA_COHERENT_POOL
-    CONFIG_DMA_DECLARE_COHERENT
     CONFIG_DMA_DIRECT_REMAP
     CONFIG_DMA_NONCOHERENT_MMAP
     CONFIG_DMA_SHARED_BUFFER
@@ -634,13 +683,15 @@ common_disable_symbols=(
     CONFIG_HW_RANDOM
     CONFIG_64BIT_TIME
     CONFIG_ERRATA_THEAD
-    CONFIG_RISCV_ALTERNATIVE
     CONFIG_RISCV_ISA_C
     CONFIG_RISCV_ISA_F
     CONFIG_RISCV_ISA_D
     CONFIG_RISCV_ISA_V
+    CONFIG_RISCV_ISA_ZICBOM
     CONFIG_RISCV_SBI_V01
     CONFIG_VT
+    CONFIG_DRM
+    CONFIG_SYNC_FILE
 )
 
 force_off_symbols=(
@@ -650,7 +701,6 @@ force_off_symbols=(
     CONFIG_CGROUP_PERF
     CONFIG_PROFILING
     CONFIG_PERF_EVENTS
-    CONFIG_DEBUG_KERNEL
     CONFIG_DEBUG_MISC
     CONFIG_DEBUG_LIST
     CONFIG_DEBUG_PLIST
@@ -735,7 +785,11 @@ echo "==> Configuring Linux kernel..."
 make -C "$LINUX_DIR" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS_COMPILE" mrproper
 make -C "$LINUX_DIR" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS_COMPILE" "$(pick_linux_defconfig)"
 cc -O2 -Wall -Wextra -o "$GEN_INIT_CPIO_BIN" "$LINUX_DIR/usr/gen_init_cpio.c"
-"$GEN_INIT_CPIO_BIN" "$INITRAMFS_LIST" > "$INITRAMFS_CPIO"
+# gen_init_cpio -t does not set the mtime of regular files.
+awk '$1 == "file" { print $3 }' "$INITRAMFS_LIST" | while read -r initramfs_file; do
+    touch -d "@$SOURCE_DATE_EPOCH" "$initramfs_file"
+done
+"$GEN_INIT_CPIO_BIN" -t "$SOURCE_DATE_EPOCH" "$INITRAMFS_LIST" > "$INITRAMFS_CPIO"
 INITRAMFS_CONTENTS="$LINUX_OUT_DIR/initramfs.contents"
 cpio -it < "$INITRAMFS_CPIO" | sed -e 's#^\./##' -e 's#^/##' > "$INITRAMFS_CONTENTS"
 for required_entry in init dev/console dev/null; do
@@ -762,7 +816,6 @@ CONFIG_SERIAL_EARLYCON=y
 CONFIG_PRINTK=y
 CONFIG_RISCV_SBI=y
 CONFIG_RISCV_TIMER=y
-CONFIG_CMDLINE_BOOL=y
 CONFIG_CMDLINE="console=ttyS0,115200 earlycon=uart8250,mmio32,0x20000000 loglevel=8 rdinit=/init cpuidle.off=1"
 CONFIG_CMDLINE_FORCE=y
 CONFIG_HZ_100=y
@@ -784,7 +837,8 @@ for symbol in "${force_off_symbols[@]}"; do
     write_config_disabled "$CONFIG_FORCE_OFF_FRAGMENT" "$symbol"
 done
 
-sh "$LINUX_DIR/scripts/kconfig/merge_config.sh" -m -r \
+# Without -O, merge_config.sh writes .config to the current directory.
+sh "$LINUX_DIR/scripts/kconfig/merge_config.sh" -m -r -O "$LINUX_DIR" \
     "$LINUX_DIR/.config" "$CONFIG_FRAGMENT"
 make -C "$LINUX_DIR" ARCH=riscv CROSS_COMPILE="$KERNEL_CROSS_COMPILE" \
     olddefconfig
@@ -799,6 +853,7 @@ if ! grep -Fqx "CONFIG_INITRAMFS_SOURCE=\"$INITRAMFS_CPIO\"" "$LINUX_DIR/.config
     echo "Final kernel config dropped CONFIG_INITRAMFS_SOURCE" >&2
     exit 1
 fi
+verify_kconfig "$LINUX_DIR/.config" "$CONFIG_FRAGMENT" "$CONFIG_FORCE_OFF_FRAGMENT"
 
 echo "==> Building Linux kernel image..."
 make -C "$LINUX_DIR" -j"$(num_jobs)" \
