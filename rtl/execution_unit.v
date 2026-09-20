@@ -12,6 +12,7 @@ module execution_unit(
     input wire rs2_valid,
     input wire instr_valid,
     input wire [31:0] pc_input,
+    input wire [31:0] instr,
     
     // Data forwarding inputs
     input wire [1:0] forward_a,
@@ -41,6 +42,7 @@ module execution_unit(
     input wire interrupt_pending,
     input wire [31:0] interrupt_cause,
     input wire interrupt_to_supervisor,
+    input wire [31:0] interrupt_vector,
     input wire [31:0] mtvec,
     input wire [31:0] mepc,
     input wire [31:0] stvec,
@@ -50,6 +52,11 @@ module execution_unit(
     input wire [31:0] mstatus,
     input wire [31:0] mcounteren,
     input wire [31:0] scounteren,
+
+    // Sdtrig: per-trigger enable (privilege and reentrancy applied), then the four tdata2 values.
+    input wire [3:0] trigger_enabled,
+    input wire [27:0] trigger_control,
+    input wire [127:0] trigger_tdata2,
     
     // Add interrupt/exception outputs
     output reg interrupt_taken,
@@ -63,7 +70,10 @@ module execution_unit(
     output reg load_address_misaligned_exception,
     output reg store_address_misaligned_exception,
     output reg [31:0] exception_tval,
-    output reg wfi_instruction
+    output reg wfi_instruction,
+    output reg breakpoint_trigger_exception,
+    // An execute trigger fires before the instruction, so it wins over its fetch page fault.
+    output wire execute_trigger_hit
 );
 
 // Internal signals for forwarded values
@@ -89,6 +99,20 @@ localparam CSR_INSTRET = 12'hC02;
 localparam CSR_CYCLEH = 12'hC80;
 localparam CSR_TIMEH = 12'hC81;
 localparam CSR_INSTRETH = 12'hC82;
+
+// Sdtrig address match: equal comparison against every enabled trigger of this kind.
+function trigger_match;
+    input [3:0] enabled;
+    input [3:0] kind;
+    input [31:0] addr;
+    input [127:0] tdata2;
+    begin
+        trigger_match = (enabled[0] && kind[0] && (addr == tdata2[31:0])) ||
+                        (enabled[1] && kind[1] && (addr == tdata2[63:32])) ||
+                        (enabled[2] && kind[2] && (addr == tdata2[95:64])) ||
+                        (enabled[3] && kind[3] && (addr == tdata2[127:96]));
+    end
+endfunction
 
 function is_counter_shadow_csr;
     input [11:0] csr_addr_in;
@@ -128,6 +152,22 @@ function store_address_misaligned;
         endcase
     end
 endfunction
+
+// Sdtrig: LR is a load, SC a store and an AMO both (Sdtrig, A extension); the match is on the address.
+wire [3:0] trigger_execute = {trigger_control[23], trigger_control[16], trigger_control[9], trigger_control[2]};
+wire [3:0] trigger_store = {trigger_control[22], trigger_control[15], trigger_control[8], trigger_control[1]};
+wire [3:0] trigger_load = {trigger_control[21], trigger_control[14], trigger_control[7], trigger_control[0]};
+wire is_atomic_load = (instr_id == INSTR_LR_W);
+wire is_atomic_store = (instr_id == INSTR_SC_W);
+wire is_atomic_rmw = (opcode == 7'b0101111) && !is_atomic_load && !is_atomic_store;
+wire [31:0] trigger_data_addr = (opcode == 7'b0101111) ? rs1_value : (rs1_value + imm);
+assign execute_trigger_hit = instr_valid &&
+                             trigger_match(trigger_enabled, trigger_execute, pc_input, trigger_tdata2);
+wire load_trigger_hit = instr_valid && (is_atomic_load || is_atomic_rmw) &&
+                        trigger_match(trigger_enabled, trigger_load, trigger_data_addr, trigger_tdata2);
+wire store_trigger_hit = instr_valid && (is_atomic_store || is_atomic_rmw) &&
+                         trigger_match(trigger_enabled, trigger_store, trigger_data_addr, trigger_tdata2);
+wire atomic_trigger_hit = load_trigger_hit || store_trigger_hit;
 
 // CSR-related signals
 assign csr_addr = imm[11:0];  // Extract CSR address from immediate field
@@ -231,6 +271,7 @@ always @(*) begin
     store_address_misaligned_exception = 0;
     exception_tval = 0;
     wfi_instruction = 0;
+    breakpoint_trigger_exception = 0;
     effective_addr = 0;
     target_addr = 0;
     
@@ -242,9 +283,17 @@ always @(*) begin
     if (interrupt_pending) begin
         jump_signal = 1;
         trap_to_supervisor = interrupt_to_supervisor;
-        jump_addr = interrupt_to_supervisor ? stvec : mtvec;  // Jump to interrupt handler
+        jump_addr = interrupt_vector;  // Jump to interrupt handler
         flush_pipeline = 1;
         interrupt_taken = 1;
+    // An execute trigger fires before the instruction, ahead of every exception it could raise.
+    end else if (execute_trigger_hit) begin
+        jump_signal = 1;
+        trap_to_supervisor = delegate_breakpoint;
+        jump_addr = trap_to_supervisor ? stvec : mtvec;
+        flush_pipeline = 1;
+        breakpoint_trigger_exception = 1;
+        exception_tval = pc_input;
     end else if (instr_valid && instr_id == INSTR_INVALID) begin
         jump_signal = 1;
         trap_to_supervisor = delegate_illegal_instruction;
@@ -262,7 +311,15 @@ always @(*) begin
             7'b0000011: begin // Load instructions
             effective_addr = rs1_value + imm;
             mem_addr = effective_addr;
-            if (load_address_misaligned(instr_id, effective_addr)) begin
+            // A load/store trigger fires before the access, so above misalignment and page faults.
+            if (trigger_match(trigger_enabled, trigger_load, effective_addr, trigger_tdata2)) begin
+                jump_signal = 1;
+                trap_to_supervisor = delegate_breakpoint;
+                jump_addr = trap_to_supervisor ? stvec : mtvec;
+                flush_pipeline = 1;
+                breakpoint_trigger_exception = 1;
+                exception_tval = effective_addr;
+            end else if (load_address_misaligned(instr_id, effective_addr)) begin
                 jump_signal = 1;
                 trap_to_supervisor = delegate_load_addr_misaligned;
                 jump_addr = trap_to_supervisor ? stvec : mtvec;
@@ -274,7 +331,14 @@ always @(*) begin
             7'b0100011: begin // Store instructions
             effective_addr = rs1_value + imm;
             mem_addr = effective_addr;
-            if (store_address_misaligned(instr_id, effective_addr)) begin
+            if (trigger_match(trigger_enabled, trigger_store, effective_addr, trigger_tdata2)) begin
+                jump_signal = 1;
+                trap_to_supervisor = delegate_breakpoint;
+                jump_addr = trap_to_supervisor ? stvec : mtvec;
+                flush_pipeline = 1;
+                breakpoint_trigger_exception = 1;
+                exception_tval = effective_addr;
+            end else if (store_address_misaligned(instr_id, effective_addr)) begin
                 jump_signal = 1;
                 trap_to_supervisor = delegate_store_addr_misaligned;
                 jump_addr = trap_to_supervisor ? stvec : mtvec;
@@ -286,7 +350,14 @@ always @(*) begin
             7'b0101111: begin // AMO/LR/SC instructions
             effective_addr = rs1_value;
             mem_addr = effective_addr;
-            if (load_address_misaligned(instr_id, effective_addr)) begin
+            if (atomic_trigger_hit) begin
+                jump_signal = 1;
+                trap_to_supervisor = delegate_breakpoint;
+                jump_addr = trap_to_supervisor ? stvec : mtvec;
+                flush_pipeline = 1;
+                breakpoint_trigger_exception = 1;
+                exception_tval = effective_addr;
+            end else if (load_address_misaligned(instr_id, effective_addr)) begin
                 jump_signal = 1;
                 trap_to_supervisor = delegate_load_addr_misaligned;
                 jump_addr = trap_to_supervisor ? stvec : mtvec;
@@ -529,6 +600,11 @@ always @(*) begin
             default: begin
             end
         endcase
+    end
+
+    // mtval/stval may hold the faulting instruction (privileged spec 3.1.16); report it, as Spike does.
+    if (illegal_instruction_exception) begin
+        exception_tval = instr;
     end
 end
 

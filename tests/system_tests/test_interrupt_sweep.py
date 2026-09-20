@@ -2,6 +2,13 @@
 
 Each scenario runs once without an interrupt as the reference, then once per cycle with an interrupt
 raised at that cycle. Stores and final memory must match the reference.
+
+Vectored variants set MODE 1 in mtvec and stvec. Every vector-table entry checks that it matches the
+trap it was reached by, so a wrong entry hangs the reference run instead of being absorbed by the
+common handler.
+
+Svade variants start every trial with A and D clear in the megapages, so page faults go to the M-mode
+handler, which sets A (and D for a store/AMO fault) and retries. Interrupts land in and around them.
 """
 
 import os
@@ -26,6 +33,7 @@ RESULT_HI = RESULT_LO + 4 * RESULT_WORDS
 DONE_ADDR = 0x1000_0300
 DONE_VALUE = 0x444F_4E45
 ACK_ADDR = 0x1000_0400
+TRIGGER_COUNT = 0x1000_0500
 M_SCRATCH = 0x1000_0800
 S_SCRATCH = 0x1000_0900
 PAGE_TABLE = 0x1001_0000
@@ -39,21 +47,62 @@ MEGAPAGES = {
     DATA_MEM_BASE: 0xCF,
     0x0200_0000: 0xC7,
 }
+PTE_A_D = 0xC0
 
 SCENARIOS = ["control", "memory", "csr", "atomic", "muldiv", "exceptions", "fence"]
+# Label of each scenario's loop, used as the address of the execute trigger in trigger variants.
+SCENARIO_LOOP = {"control": "c_loop", "memory": "m_loop", "csr": "k_loop", "atomic": "a_loop",
+                 "muldiv": "d_loop", "exceptions": "e_loop", "fence": "f_loop"}
+CSR_TSELECT, CSR_TDATA1, CSR_TDATA2 = 0x7A0, 0x7A1, 0x7A2
+# mcontrol type 2, fires in M, S and U on execute.
+TDATA1_EXECUTE_ANY_MODE = (2 << 28) | (1 << 6) | (1 << 4) | (1 << 3) | (1 << 2)
 
-# name, privilege (3 = M, 1 = S), MMU on, source, mideleg
+# name, privilege (3 = M, 1 = S), MMU on, source, mideleg, vectored mtvec/stvec, Svade (A/D clear),
+# execute trigger armed on the scenario loop
 VARIANTS = [
-    ("m_software", 3, 0, "software", 0x000),
-    ("m_external", 3, 0, "external", 0x000),
-    ("m_timer", 3, 0, "timer", 0x000),
-    ("s_software_delegated", 1, 0, "software", 0x002),
-    ("s_timer_delegated", 1, 0, "timer", 0x020),
-    ("s_mmu_external_delegated", 1, 1, "external", 0x200),
-    ("s_mmu_software_to_m", 1, 1, "software", 0x000),
+    ("m_software", 3, 0, "software", 0x000, 0, 0, 0),
+    ("m_external", 3, 0, "external", 0x000, 0, 0, 0),
+    ("m_timer", 3, 0, "timer", 0x000, 0, 0, 0),
+    ("s_software_delegated", 1, 0, "software", 0x002, 0, 0, 0),
+    ("s_timer_delegated", 1, 0, "timer", 0x020, 0, 0, 0),
+    ("s_mmu_external_delegated", 1, 1, "external", 0x200, 0, 0, 0),
+    ("s_mmu_software_to_m", 1, 1, "software", 0x000, 0, 0, 0),
+    ("m_timer_vectored", 3, 0, "timer", 0x000, 1, 0, 0),
+    ("s_mmu_external_delegated_vectored", 1, 1, "external", 0x200, 1, 0, 0),
+    ("s_mmu_timer_delegated_svade", 1, 1, "timer", 0x020, 0, 1, 0),
+    ("s_mmu_software_to_m_svade", 1, 1, "software", 0x000, 0, 1, 0),
+    ("m_software_trigger", 3, 0, "software", 0x000, 0, 0, 1),
+    ("s_mmu_external_delegated_trigger", 1, 1, "external", 0x200, 0, 0, 1),
 ]
 
 TRIAL_SLACK_CYCLES = 400
+
+
+def _vector_table(mode: str) -> str:
+    """16 entries; entry i saves t0, checks i against the trap, then joins the direct handler."""
+    lines = [f"        .align  2\n{mode}_vec:"]
+    lines += [f"        j       {mode}_vec_{i}" for i in range(16)]
+    for i in range(16):
+        lines.append(
+            f"{mode}_vec_{i}:\n"
+            f"        csrrw   sp, {mode}scratch, sp\n"
+            f"        sw      t0, 0(sp)\n"
+            f"        li      t0, {i}\n"
+            f"        j       {mode}_vec_check"
+        )
+    lines.append(
+        f"{mode}_vec_check:\n"
+        f"        sw      t1, 4(sp)\n"
+        f"        csrr    t1, {mode}cause\n"
+        f"        bltz    t1, 1f\n"
+        f"        li      t1, 0\n"
+        f"1:\n"
+        f"        andi    t1, t1, 0x3f\n"
+        f"        bne     t0, t1, vector_mismatch\n"
+        f"        lw      t1, 4(sp)\n"
+        f"        j       {mode}_trap_saved"
+    )
+    return "\n".join(lines)
 MIN_DISTINCT_INTERRUPT_PCS = 10
 
 PROGRAM = f"""
@@ -61,10 +110,20 @@ PROGRAM = f"""
         .option norelax
         .global _start
 _start:
-        la      t0, m_trap
-        csrw    mtvec, t0
-        la      t0, s_trap
-        csrw    stvec, t0
+        li      t0, {CONFIG:#x}
+        lw      t3, 20(t0)
+        la      t1, m_trap
+        beqz    t3, 3f
+        la      t1, m_vec
+        ori     t1, t1, 1
+3:
+        csrw    mtvec, t1
+        la      t1, s_trap
+        beqz    t3, 4f
+        la      t1, s_vec
+        ori     t1, t1, 1
+4:
+        csrw    stvec, t1
         li      t0, {M_SCRATCH:#x}
         csrw    mscratch, t0
         li      t0, {S_SCRATCH:#x}
@@ -85,6 +144,13 @@ _start:
         li      t2, {SATP_SV32:#x}
         csrw    satp, t2
 2:
+        lw      t1, 28(t0)
+        beqz    t1, 5f
+        csrw    {CSR_TSELECT:#x}, zero
+        csrw    {CSR_TDATA2:#x}, t1
+        li      t2, {TDATA1_EXECUTE_ANY_MODE:#x}
+        csrw    {CSR_TDATA1:#x}, t2
+5:
         lw      t1, 0(t0)
         slli    t1, t1, 2
         la      t2, scenario_table
@@ -109,13 +175,51 @@ scenario_table:
         .word   sc_control, sc_memory, sc_csr, sc_atomic, sc_muldiv, sc_exceptions, sc_fence
 
 # ---- Machine-mode trap handler
+# In Svade variants a page fault on a mapped megapage sets A (and D for cause 15) and retries.
         .align  2
 m_trap:
         csrrw   sp, mscratch, sp
         sw      t0, 0(sp)
+m_trap_saved:
         sw      t1, 4(sp)
+        sw      t2, 8(sp)
         csrr    t0, mcause
         bltz    t0, m_irq
+        li      t1, 3
+        bne     t0, t1, m_not_breakpoint
+        # An armed execute trigger fires once; count it, disable it, retry the instruction.
+        li      t1, {TRIGGER_COUNT:#x}
+        lw      t2, 0(t1)
+        addi    t2, t2, 1
+        sw      t2, 0(t1)
+        csrw    {CSR_TDATA1:#x}, zero
+        j       m_ret
+m_not_breakpoint:
+        li      t1, {CONFIG:#x}
+        lw      t1, 24(t1)
+        beqz    t1, m_skip
+        li      t1, 12
+        beq     t0, t1, m_ad
+        li      t1, 13
+        beq     t0, t1, m_ad
+        li      t1, 15
+        bne     t0, t1, m_skip
+m_ad:
+        csrr    t1, mtval
+        srli    t1, t1, 22
+        slli    t1, t1, 2
+        li      t2, {PAGE_TABLE:#x}
+        add     t1, t1, t2
+        lw      t2, 0(t1)
+        beqz    t2, m_skip
+        ori     t2, t2, 0x40
+        addi    t0, t0, -15
+        bnez    t0, 1f
+        ori     t2, t2, 0x80
+1:
+        sw      t2, 0(t1)
+        j       m_ret
+m_skip:
         csrr    t0, mepc
         addi    t0, t0, 4
         csrw    mepc, t0
@@ -132,6 +236,7 @@ m_timer:
         li      t1, -1
         sw      t1, 0(t0)
 m_ret:
+        lw      t2, 8(sp)
         lw      t1, 4(sp)
         lw      t0, 0(sp)
         csrrw   sp, mscratch, sp
@@ -142,6 +247,7 @@ m_ret:
 s_trap:
         csrrw   sp, sscratch, sp
         sw      t0, 0(sp)
+s_trap_saved:
         sw      t1, 4(sp)
         csrr    t0, scause
         bltz    t0, s_irq
@@ -165,6 +271,12 @@ s_ret:
         lw      t0, 0(sp)
         csrrw   sp, sscratch, sp
         sret
+
+{_vector_table("m")}
+{_vector_table("s")}
+
+vector_mismatch:
+        j       vector_mismatch
 
 # ---- Scenarios (t6 = result area)
 sc_control:
@@ -429,10 +541,13 @@ class Trial:
         self.entry_cycle = None
         self.interrupt_pcs = []
         self.bubble_interrupts = 0
+        self.pte_writes = 0
+        self.trigger_hits = 0
 
 
-async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limit, want_entry=False):
-    _, privilege, mmu, source, mideleg = variant
+async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limit, want_entry=False,
+                    trigger_addr=0):
+    _, privilege, mmu, source, mideleg, vectored, svade, _trigger = variant
     pin = {"software": dut.software_interrupt, "external": dut.external_interrupt}.get(source)
 
     dut.rst.value = 1
@@ -445,10 +560,16 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
     _poke(dut, CONFIG + 8, mmu)
     _poke(dut, CONFIG + 12, timer_target)
     _poke(dut, CONFIG + 16, mideleg)
+    _poke(dut, CONFIG + 20, vectored)
+    _poke(dut, CONFIG + 24, svade)
+    _poke(dut, CONFIG + 28, trigger_addr)
+    for va, flags in MEGAPAGES.items():
+        _poke(dut, PAGE_TABLE + 4 * (va >> 22), ((va >> 12) << 10) | (flags & ~PTE_A_D if svade else flags))
     for index in range(RESULT_WORDS):
         _poke(dut, RESULT_LO + 4 * index, 0)
     _poke(dut, DONE_ADDR, 0)
     _poke(dut, ACK_ADDR, 0)
+    _poke(dut, TRIGGER_COUNT, 0)
     await ClockCycles(dut.clk, 2)
     dut.rst.value = 0
 
@@ -469,7 +590,8 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
         await ReadOnly()
         if want_entry and trial.entry_cycle is None and int(dut.pc_debug.value) == entry_addr:
             trial.entry_cycle = cycle
-        if int(dut.cpu_mem_write_en.value):
+        # A store that raises a page fault is not committed (it is retried after the handler).
+        if int(dut.cpu_mem_write_en.value) and not int(dut.cpu_store_page_fault.value):
             addr = int(dut.cpu_mem_write_addr.value)
             if RESULT_LO <= addr < RESULT_HI:
                 trial.stores.append((addr, int(dut.cpu_mem_write_data.value), int(dut.cpu_write_byte_enable.value)))
@@ -477,6 +599,8 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
                 lower_pin = True
             elif addr == DONE_ADDR and int(dut.cpu_mem_write_data.value) == DONE_VALUE:
                 trial.done_cycle = cycle
+            elif PAGE_TABLE <= addr < PAGE_TABLE + 0x1000:
+                trial.pte_writes += 1
         if watch_taken and int(dut.cpu_inst.interrupt_taken_qualified.value):
             trial.interrupt_pcs.append(int(dut.cpu_inst.interrupt_pc.value))
             if not int(dut.cpu_inst.id_ex_inst0_instr_valid_out.value) and int(dut.cpu_inst.if_id_instr_valid_out.value):
@@ -485,6 +609,7 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
             break
     await RisingEdge(dut.clk)
     trial.memory = [_peek(dut, RESULT_LO + 4 * index) for index in range(RESULT_WORDS)]
+    trial.trigger_hits = _peek(dut, TRIGGER_COUNT)
     dut.software_interrupt.value = 0
     dut.external_interrupt.value = 0
     return trial
@@ -520,9 +645,15 @@ async def sweep_variant(dut, variant):
     trial_count = 0
     for scenario_index, scenario in enumerate(SCENARIOS):
         entry = symbols[f"sc_{scenario}"]
-        reference = await run_trial(dut, scenario_index, variant, entry, None, 20000, want_entry=True)
+        trigger_addr = symbols[SCENARIO_LOOP[scenario]] if variant[7] else 0
+        reference = await run_trial(dut, scenario_index, variant, entry, None, 20000, want_entry=True,
+                                    trigger_addr=trigger_addr)
         assert reference.done_cycle is not None, f"{name}/{scenario}: reference run did not finish"
         assert reference.stores, f"{name}/{scenario}: reference run made no result stores"
+        if variant[6]:
+            assert reference.pte_writes > 0, f"{name}/{scenario}: no A/D page fault was taken with A/D clear"
+        if variant[7]:
+            assert reference.trigger_hits > 0, f"{name}/{scenario}: the armed execute trigger never fired"
         for offset, expected in _expected_absolute(scenario, variant[2]).items():
             actual = reference.memory[offset // 4]
             assert actual == expected, f"{name}/{scenario}: reference result @+{offset} = {actual:#x}, expected {expected:#x}"
@@ -530,7 +661,8 @@ async def sweep_variant(dut, variant):
         first = max(0, (reference.entry_cycle or 0) - 4)
         limit = reference.done_cycle + TRIAL_SLACK_CYCLES
         for inject in range(first, reference.done_cycle + 1):
-            trial = await run_trial(dut, scenario_index, variant, entry, inject, limit)
+            trial = await run_trial(dut, scenario_index, variant, entry, inject, limit,
+                                    trigger_addr=trigger_addr)
             trial_count += 1
             if trial.interrupt_pcs:
                 taken_trials += 1

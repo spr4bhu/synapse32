@@ -160,6 +160,7 @@ module riscv_cpu (
     wire [6:0] id_ex_inst0_opcode_out;
     wire [6:0] id_ex_inst0_instr_id_out;
     wire [31:0] id_ex_inst0_pc_out;
+    wire [31:0] id_ex_inst0_instr_out;
     wire [31:0] id_ex_inst0_rs1_value_out;
     wire [31:0] id_ex_inst0_rs2_value_out;
     wire id_ex_inst0_instr_valid_out;
@@ -184,6 +185,7 @@ module riscv_cpu (
         .opcode_in(decoder_inst0_opcode_out),
         .instr_id_in(decoder_inst0_instr_id_out),
         .pc_in(if_id_pc_out),
+        .instr_in(if_id_instr_out),
         .rs1_value_in(rf_inst0_rs1_value_out),
         .rs2_value_in(rf_inst0_rs2_value_out),
         .instr_valid_in(if_id_instr_valid_out),
@@ -201,6 +203,7 @@ module riscv_cpu (
         .opcode_out(id_ex_inst0_opcode_out),
         .instr_id_out(id_ex_inst0_instr_id_out),
         .pc_out(id_ex_inst0_pc_out),
+        .instr_out(id_ex_inst0_instr_out),
         .rs1_value_out(id_ex_inst0_rs1_value_out),
         .rs2_value_out(id_ex_inst0_rs2_value_out),
         .instr_valid_out(id_ex_inst0_instr_valid_out),
@@ -265,10 +268,15 @@ module riscv_cpu (
     wire csr_trap_to_supervisor;
     wire [31:0] csr_exception_tval;
     wire wfi_instruction;
+    wire breakpoint_trigger_exception;
+    wire execute_trigger_hit;
+    wire [27:0] trigger_control;
+    wire [127:0] trigger_tdata2;
     wire instret_increment;
     wire [31:0] exception_pc;
     assign exception_pc = id_ex_inst0_pc_out;
     assign synchronous_exception_taken = ecall_exception || ebreak_exception ||
+                                         breakpoint_trigger_exception ||
                                          illegal_instruction_exception ||
                                          instruction_address_misaligned_exception ||
                                          load_address_misaligned_exception ||
@@ -292,6 +300,39 @@ module riscv_cpu (
     assign module_data_mxr_out = csr_file_inst.mstatus[19];
     assign module_instr_mmu_enable_out = (csr_file_inst.privilege_mode != PRIV_M) && csr_file_inst.satp[31];
     assign module_instr_privilege_out = csr_file_inst.privilege_mode;
+    // Sdtrig: a trigger fires only in its selected mode, and not while that mode's interrupts are
+    // disabled, or a handler would retrigger on itself (Sdtrig "Native Triggers", no tcontrol).
+    function trigger_enabled_in_mode;
+        input [6:0] control;
+        input [1:0] mode;
+        input machine_interrupts_enabled;
+        input supervisor_interrupts_enabled;
+        begin
+            trigger_enabled_in_mode =
+                (mode == PRIV_M) ? (control[6] && machine_interrupts_enabled) :
+                (mode == PRIV_S) ? (control[4] && supervisor_interrupts_enabled) :
+                                   control[3];
+        end
+    endfunction
+
+    wire breakpoint_delegated = csr_file_inst.medeleg[3];
+    wire [3:0] trigger_enabled = {
+        trigger_enabled_in_mode(trigger_control[27:21], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1]),
+        trigger_enabled_in_mode(trigger_control[20:14], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1]),
+        trigger_enabled_in_mode(trigger_control[13:7], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1]),
+        trigger_enabled_in_mode(trigger_control[6:0], csr_file_inst.privilege_mode,
+                                csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1])
+    };
+
+    // Trap targets (privileged spec 3.1.7): exceptions at BASE, vectored interrupts at BASE + 4 * cause.
+    wire [31:0] mtvec_base = {csr_file_inst.mtvec[31:2], 2'b00};
+    wire [31:0] stvec_base = {csr_file_inst.stvec[31:2], 2'b00};
+    wire interrupt_vectored = interrupt_to_supervisor ? csr_file_inst.stvec[0] : csr_file_inst.mtvec[0];
+    wire [31:0] interrupt_vector = (interrupt_to_supervisor ? stvec_base : mtvec_base) +
+                                   (interrupt_vectored ? {interrupt_cause[29:0], 2'b00} : 32'h0);
     assign interrupt_taken_qualified = interrupt_taken &&
                                        !synchronous_exception_taken &&
                                        !mem_stage_page_fault_taken &&
@@ -429,7 +470,10 @@ module riscv_cpu (
         .instr_page_fault_exception(instr_stage_page_fault_taken),
         .load_page_fault_exception(mem_stage_load_page_fault),
         .store_page_fault_exception(mem_stage_store_page_fault),
+        .breakpoint_trigger_exception(breakpoint_trigger_exception),
         .exception_tval_in(csr_exception_tval),
+        .trigger_control(trigger_control),
+        .trigger_tdata2(trigger_tdata2),
         .instret_increment(instret_increment),
         .timer_interrupt(timer_interrupt),
         .software_interrupt(software_interrupt),
@@ -453,6 +497,7 @@ module riscv_cpu (
         .rs2_valid(id_ex_inst0_rs2_valid_out),
         .instr_valid(id_ex_inst0_instr_valid_out),
         .pc_input(id_ex_inst0_pc_out),
+        .instr(id_ex_inst0_instr_out),
         .forward_a(forward_a),
         .forward_b(forward_b),
         .ex_mem_result(ex_mem_forward_result),
@@ -480,15 +525,19 @@ module riscv_cpu (
                            !instr_stage_page_fault_taken),
         .interrupt_cause(interrupt_cause),
         .interrupt_to_supervisor(interrupt_to_supervisor),
-        .mtvec(csr_file_inst.mtvec),
+        .interrupt_vector(interrupt_vector),
+        .mtvec(mtvec_base),
         .mepc(csr_file_inst.mepc),
-        .stvec(csr_file_inst.stvec),
+        .stvec(stvec_base),
         .sepc(csr_file_inst.sepc),
         .medeleg(csr_file_inst.medeleg),
         .privilege_mode(csr_file_inst.privilege_mode),
         .mstatus(csr_file_inst.mstatus),
         .mcounteren(csr_file_inst.mcounteren),
         .scounteren(csr_file_inst.scounteren),
+        .trigger_enabled(trigger_enabled),
+        .trigger_control(trigger_control),
+        .trigger_tdata2(trigger_tdata2),
         .interrupt_taken(interrupt_taken),
         .mret_instruction(mret_instruction),
         .sret_instruction(sret_instruction),
@@ -500,7 +549,9 @@ module riscv_cpu (
         .load_address_misaligned_exception(load_address_misaligned_exception),
         .store_address_misaligned_exception(store_address_misaligned_exception),
         .exception_tval(exception_tval),
-        .wfi_instruction(wfi_instruction)
+        .wfi_instruction(wfi_instruction),
+        .breakpoint_trigger_exception(breakpoint_trigger_exception),
+        .execute_trigger_hit(execute_trigger_hit)
     );
 
     // Memory Stage
@@ -745,12 +796,15 @@ module riscv_cpu (
         (csr_file_inst.privilege_mode != PRIV_M) &&
         ((mem_stage_load_page_fault && csr_file_inst.medeleg[13]) ||
          (mem_stage_store_page_fault && csr_file_inst.medeleg[15]));
-    assign mem_stage_jump_addr = mem_stage_trap_to_supervisor ? csr_file_inst.stvec : csr_file_inst.mtvec;
+    assign mem_stage_jump_addr = mem_stage_trap_to_supervisor ? stvec_base : mtvec_base;
 
-    assign instr_stage_page_fault_taken = id_ex_inst0_instr_page_fault_out && id_ex_inst0_instr_valid_out;
+    // An execute trigger is higher priority than the fetch page fault of the same instruction.
+    assign instr_stage_page_fault_taken = id_ex_inst0_instr_page_fault_out &&
+                                          id_ex_inst0_instr_valid_out &&
+                                          !execute_trigger_hit;
     assign instr_stage_trap_to_supervisor =
         (csr_file_inst.privilege_mode != PRIV_M) && csr_file_inst.medeleg[12];
-    assign instr_stage_jump_addr = instr_stage_trap_to_supervisor ? csr_file_inst.stvec : csr_file_inst.mtvec;
+    assign instr_stage_jump_addr = instr_stage_trap_to_supervisor ? stvec_base : mtvec_base;
 
     assign csr_exception_pc = mem_stage_page_fault_taken   ? ex_mem_inst0_pc_out :
                               instr_stage_page_fault_taken ? id_ex_inst0_pc_out :
