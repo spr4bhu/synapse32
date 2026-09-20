@@ -89,6 +89,7 @@ async def trial(dut, k):
     dut.rst.value = 0
     stored = {}
     mepc = None
+    bubble = False
     for cycle in range(k + 60):
         if cycle == k:
             dut.software_interrupt.value = 1
@@ -105,17 +106,22 @@ async def trial(dut, k):
             ifid_valid = int(dut.cpu_inst.if_id_instr_valid_out.value)
             ifid_pc = int(dut.cpu_inst.if_id_pc_out.value)
             hazard = int(dut.cpu_inst.hazard_stall.value)
+            bubble = not ex_valid and bool(ifid_valid)
             info = f"ex_valid={ex_valid} ex_pc=0x{ex_pc:08x} ifid_valid={ifid_valid} ifid_pc=0x{ifid_pc:08x} hazard={hazard}"
         await NextTimeStep()
-    return stored, mepc, (info if mepc is not None else "")
+    return stored, mepc, bubble, (info if mepc is not None else "")
 
 
 @cocotb.test()
 async def sweep(dut):
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     bad = []
+    taken = 0
+    bubble_trials = 0
     for k in range(4, 40):
-        stored, mepc, info = await trial(dut, k)
+        stored, mepc, bubble, info = await trial(dut, k)
+        taken += mepc is not None
+        bubble_trials += bubble
         val = stored.get(DATA_BASE + 4)
         done = stored.get(DATA_BASE + 8)
         ok = (val == 6) and (done == 1)
@@ -123,6 +129,8 @@ async def sweep(dut):
         if mepc is not None and not ok:
             bad.append((k, mepc, val, done, info))
     assert not bad, f"instruction skipped for {len(bad)} interrupt timings: {bad}"
+    assert taken > 0, "no trial took the interrupt"
+    assert bubble_trials > 0, "no trial took the interrupt on an EX bubble with IF/ID valid; coverage lost"
 
 
 def runCocotbTests():
