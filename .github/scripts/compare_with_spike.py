@@ -26,7 +26,7 @@ NOT_APPLICABLE = {
     "rv32ui-p-ma_data": "Zicclsm (misaligned loads/stores) not implemented; core traps",
     "rv32mi-p-pmpaddr": "PMP not implemented; pmpaddr0/pmpcfg0 are plain registers",
 }
-# Both sides must pass, but the traces differ because the feature is optional.
+# Pass/fail must match Spike, but the traces differ because the feature is optional.
 TRACE_NOT_COMPARABLE = {
     "rv32mi-p-breakpoint": "Sdtrig is optional; the core has no triggers, so the test skips its trigger cases",
     "rv32mi-p-illegal": "mtvec is WARL; the core supports direct mode only, so the test skips its vectored part",
