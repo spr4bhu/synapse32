@@ -1,14 +1,8 @@
 """Routing of supervisor-level interrupts by mideleg (privileged spec 3.1.9, BUGS B14).
 
-An interrupt i traps to M-mode when mip[i] and mie[i] are set, mideleg[i] is clear, and the hart is below
-M-mode or in M-mode with mstatus.MIE set. That includes the supervisor-level bits SSIP, STIP and SEIP when
-they are not delegated; they keep their cause codes 1, 5 and 9. Delegated ones trap to S-mode, and are
-never taken while in M-mode. Priority among M-mode interrupts: MEI, MSI, MTI, SEI, SSI, STI.
-
-The program pends S-level bits through mip while in M-mode with interrupts off, then drops to the
-configured mode and runs a counting loop. Each handler logs (handler mode, cause), clears the source
-(mip/sip bit, or mtimecmp for the machine timer) and returns. The image is assembled from the source below
-and loaded through the unified_mem backdoor, so one Verilator build serves every case.
+An undelegated SSIP, STIP or SEIP traps to M-mode keeping cause 1, 5 or 9, after MEI, MSI and MTI.
+A delegated one traps to S-mode and is never taken while in M-mode. Each case pends its bits, runs a
+counting loop in the configured mode, and checks which handler ran with which cause.
 """
 
 import os
@@ -161,8 +155,7 @@ M, S, U = 3, 1, 0
 SSI, STI, SEI = 0x002, 0x020, 0x200
 IRQ = 0x8000_0000
 
-# name, privilege, mideleg, mip bits pended by software, mie, machine timer pending, global enable
-# (mstatus.MIE for M, mstatus.SIE for S), expected log [(handler, cause)]
+# name, privilege, mideleg, pended mip bits, mie, machine timer pending, global enable, expected log
 CASES = [
     ("m_ssi_undelegated", M, 0x000, SSI, SSI, 0, 1, [("m", IRQ | 1)]),
     ("m_sti_undelegated", M, 0x000, STI, STI, 0, 1, [("m", IRQ | 5)]),
@@ -192,12 +185,10 @@ def _find_repo_root() -> Path:
 
 
 def _build_dir() -> Path:
-    # The runner assembles into tests/build; the simulator runs inside sim_build, so it gets the path.
     return Path(os.environ.get("UNDELEGATED_IRQ_BUILD", Path.cwd() / "build" / "undelegated_interrupts"))
 
 
 def assemble(build_dir: Path) -> None:
-    """Assemble the program into image.bin (called by the runner, before the sim)."""
     build_dir.mkdir(parents=True, exist_ok=True)
     src = build_dir / "undelegated.S"
     lds = build_dir / "undelegated.ld"
@@ -213,7 +204,6 @@ def assemble(build_dir: Path) -> None:
         check=True,
     )
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
-    # Elaboration needs some image; the real program is loaded through the backdoor.
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 

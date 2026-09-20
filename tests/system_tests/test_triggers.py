@@ -1,14 +1,9 @@
 """Sdtrig address triggers (mcontrol type 2, action 0: breakpoint exception).
 
-Four triggers, selected through tselect; tdata1 keeps only the fields this core supports (mode bits m/s/u
-and access type execute/store/load), so unsupported bits read back 0 and a write of 0 disables the trigger.
-A matching instruction traps with cause 3 before it executes: mepc/sepc is the instruction, mtval/stval is
-the matched address (pc for execute, data address for load, store and AMO), and the access does not happen.
-Triggers do not fire in M-mode while mstatus.MIE is 0, nor in S-mode while sstatus.SIE is 0 and breakpoints
-are delegated, so a handler cannot retrigger on itself (Sdtrig "Native Triggers").
-
-Each case configures triggers and runs a body of accesses; the handler logs (handler mode, cause, tval, epc)
-and skips the instruction. The test compares the log with the ELF labels and checks memory and registers.
+A matching instruction traps with cause 3 before it executes: epc is the instruction, mtval/stval the
+matched address, and the access does not happen. tdata1 is write-any-read-legal, so unsupported bits
+read back 0 and a write of 0 disables the trigger. A trigger does not fire while its mode's interrupts
+are disabled, so a handler cannot retrigger on itself (Sdtrig "Native Triggers").
 """
 
 import os
@@ -157,7 +152,7 @@ bad_amo:
         sw      a6, 8(t6)
         j       finish
 
-# ---- Trigger CSR legalization: write unsupported fields, read back what is supported.
+# ---- Trigger CSR legalization
 warl_body:
         li      t6, {RESULT:#x}
         csrw    {CSR_TSELECT:#x}, zero
@@ -250,7 +245,7 @@ CASES = [
      [], {0: 1, 4: DATA_A_VALUE, 8: DATA_C_VALUE}),
 ]
 
-# Read-backs of the legalization body: tdata1 keeps type 2 plus m/s/u/execute/store/load only.
+# Read-backs of the legalization body
 WARL_EXPECTED = {
     0: TYPE_MCONTROL | M_BIT | S_BIT | U_BIT | EXECUTE | STORE | LOAD,  # write of all ones
     4: TYPE_MCONTROL,                                                   # write of 0 disables it
@@ -273,12 +268,10 @@ def _find_repo_root() -> Path:
 
 
 def _build_dir() -> Path:
-    # The runner assembles into tests/build; the simulator runs inside sim_build, so it gets the path.
     return Path(os.environ.get("TRIGGERS_BUILD", Path.cwd() / "build" / "triggers"))
 
 
 def assemble(build_dir: Path) -> None:
-    """Assemble the program into image.bin and symbols.txt (called by the runner, before the sim)."""
     build_dir.mkdir(parents=True, exist_ok=True)
     src = build_dir / "triggers.S"
     lds = build_dir / "triggers.ld"
@@ -296,12 +289,10 @@ def assemble(build_dir: Path) -> None:
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
     symbols = _elf32_symbols(elf.read_bytes())
     (build_dir / "symbols.txt").write_text("".join(f"{value:08x} {name}\n" for name, value in sorted(symbols.items())))
-    # Elaboration needs some image; the real program is loaded through the backdoor.
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 
 def _elf32_symbols(elf: bytes) -> dict:
-    """Name -> value for every named symbol of a little-endian ELF32 file (no binutils needed)."""
     assert elf[:4] == b"\x7fELF" and elf[4] == 1 and elf[5] == 1, "expected a little-endian ELF32 file"
     e_shoff, = struct.unpack_from("<I", elf, 32)
     e_shentsize, e_shnum = struct.unpack_from("<HH", elf, 46)

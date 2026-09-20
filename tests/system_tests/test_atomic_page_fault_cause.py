@@ -1,12 +1,9 @@
 """Page-fault causes of atomic and ordinary memory accesses under Sv32 (BUGS B15).
 
-An AMO reads and writes its address; when the translation or the permission check fails, the exception is a
-store/AMO page fault (cause 15), never a load page fault. LR only reads (13); SC and stores write (15); loads
-read (13). The faulting instruction must have no effect: memory and rd stay unchanged.
-
-S-mode case: code and data run on identity megapages; VA 0x40000000 maps the data megapage read-only and VA
-0x50000000 is unmapped. M-mode case: the same accesses with MPRV = 1 and MPP = S. Each handler logs
-(handler mode, cause, tval, epc) and skips the instruction; the test compares the log with the ELF labels.
+An access that writes reports a store/AMO page fault (15), including an AMO, which also reads; LR and
+loads report a load page fault (13). The faulting instruction leaves memory and rd unchanged. The
+cases run in S-mode on identity megapages with a read-only alias and an unmapped VA, and in M-mode
+with MPRV = 1 and MPP = S.
 """
 
 import os
@@ -41,7 +38,7 @@ READ_ONLY_VA = 0x4000_0000
 UNMAPPED_VA = 0x5000_0000
 RD_MARKER = 0x5A5A
 
-# VA megapage -> (PA, flags). Code V R W X A D, data V R W A D, read-only alias V R A D.
+# VA megapage -> (PA, flags)
 MEGAPAGES = {
     INSTR_MEM_BASE: (INSTR_MEM_BASE, 0xCF),
     DATA_MEM_BASE: (DATA_MEM_BASE, 0xC7),
@@ -211,12 +208,10 @@ def _find_repo_root() -> Path:
 
 
 def _build_dir() -> Path:
-    # The runner assembles into tests/build; the simulator runs inside sim_build, so it gets the path.
     return Path(os.environ.get("ATOMIC_PF_BUILD", Path.cwd() / "build" / "atomic_page_fault_cause"))
 
 
 def assemble(build_dir: Path) -> None:
-    """Assemble the program into image.bin and symbols.txt (called by the runner, before the sim)."""
     build_dir.mkdir(parents=True, exist_ok=True)
     src = build_dir / "atomic_pf.S"
     lds = build_dir / "atomic_pf.ld"
@@ -234,12 +229,10 @@ def assemble(build_dir: Path) -> None:
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
     symbols = _elf32_symbols(elf.read_bytes())
     (build_dir / "symbols.txt").write_text("".join(f"{value:08x} {name}\n" for name, value in sorted(symbols.items())))
-    # Elaboration needs some image; the real program is loaded through the backdoor.
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 
 def _elf32_symbols(elf: bytes) -> dict:
-    """Name -> value for every named symbol of a little-endian ELF32 file (no binutils needed)."""
     assert elf[:4] == b"\x7fELF" and elf[4] == 1 and elf[5] == 1, "expected a little-endian ELF32 file"
     e_shoff, = struct.unpack_from("<I", elf, 32)
     e_shentsize, e_shnum = struct.unpack_from("<HH", elf, 46)

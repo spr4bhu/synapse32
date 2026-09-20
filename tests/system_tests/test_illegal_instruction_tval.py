@@ -1,14 +1,8 @@
 """mtval/stval on illegal-instruction traps (privileged spec 3.1.16).
 
-The spec lets mtval hold either 0 or the faulting instruction bits; this core reports the instruction, like
-Spike. The program runs a body of instructions in M, S or U mode. Each instruction labelled bad_* is illegal
-in that mode (reserved opcode, read-only or unimplemented CSR, CSR of a higher privilege, xRET below its
-mode, WFI with TW, SFENCE.VMA with TVM, SRET with TSR, counter without mcounteren); the others are legal and
-must not trap. The handler logs (handler mode, cause, tval, epc) and skips the instruction. The test checks
-every log entry against the ELF: cause 2, epc at the bad_* label, tval equal to the instruction word there.
-
-The image is assembled from the source below and loaded through the unified_mem backdoor, so one Verilator
-build serves every case.
+The spec allows 0 or the faulting instruction; this core reports the instruction, like Spike. Every
+instruction labelled bad_* is illegal in its case's mode and must trap with cause 2, epc at the label
+and tval the instruction word there; the others must not trap.
 """
 
 import os
@@ -198,12 +192,10 @@ def _find_repo_root() -> Path:
 
 
 def _build_dir() -> Path:
-    # The runner assembles into tests/build; the simulator runs inside sim_build, so it gets the path.
     return Path(os.environ.get("ILLEGAL_TVAL_BUILD", Path.cwd() / "build" / "illegal_instruction_tval"))
 
 
 def assemble(build_dir: Path) -> None:
-    """Assemble the program into image.bin and symbols.txt (called by the runner, before the sim)."""
     build_dir.mkdir(parents=True, exist_ok=True)
     src = build_dir / "illegal.S"
     lds = build_dir / "illegal.ld"
@@ -221,12 +213,10 @@ def assemble(build_dir: Path) -> None:
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
     symbols = _elf32_symbols(elf.read_bytes())
     (build_dir / "symbols.txt").write_text("".join(f"{value:08x} {name}\n" for name, value in sorted(symbols.items())))
-    # Elaboration needs some image; the real program is loaded through the backdoor.
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 
 def _elf32_symbols(elf: bytes) -> dict:
-    """Name -> value for every named symbol of a little-endian ELF32 file (no binutils needed)."""
     assert elf[:4] == b"\x7fELF" and elf[4] == 1 and elf[5] == 1, "expected a little-endian ELF32 file"
     e_shoff, = struct.unpack_from("<I", elf, 32)
     e_shentsize, e_shnum = struct.unpack_from("<HH", elf, 46)

@@ -300,9 +300,8 @@ module riscv_cpu (
     assign module_data_mxr_out = csr_file_inst.mstatus[19];
     assign module_instr_mmu_enable_out = (csr_file_inst.privilege_mode != PRIV_M) && csr_file_inst.satp[31];
     assign module_instr_privilege_out = csr_file_inst.privilege_mode;
-    // Sdtrig: a trigger fires only in a mode its own bit selects, and action-0 triggers must not
-    // fire while interrupts are disabled in that mode, or a handler would retrigger on itself
-    // (Sdtrig "Native Triggers", first solution: no tcontrol).
+    // Sdtrig: a trigger fires only in its selected mode, and not while that mode's interrupts are
+    // disabled, or a handler would retrigger on itself (Sdtrig "Native Triggers", no tcontrol).
     function trigger_enabled_in_mode;
         input [6:0] control;
         input [1:0] mode;
@@ -328,8 +327,7 @@ module riscv_cpu (
                                 csr_file_inst.mstatus[3], !breakpoint_delegated || csr_file_inst.mstatus[1])
     };
 
-    // Trap targets (privileged spec 3.1.7): exceptions enter at BASE; in vectored MODE (1)
-    // interrupts enter at BASE + 4 * cause code.
+    // Trap targets (privileged spec 3.1.7): exceptions at BASE, vectored interrupts at BASE + 4 * cause.
     wire [31:0] mtvec_base = {csr_file_inst.mtvec[31:2], 2'b00};
     wire [31:0] stvec_base = {csr_file_inst.stvec[31:2], 2'b00};
     wire interrupt_vectored = interrupt_to_supervisor ? csr_file_inst.stvec[0] : csr_file_inst.mtvec[0];

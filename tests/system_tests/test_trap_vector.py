@@ -1,17 +1,9 @@
 """Trap vector modes of mtvec and stvec (privileged spec 3.1.7 and 4.1.2).
 
-MODE 0 (direct): every trap enters at BASE. MODE 1 (vectored): synchronous exceptions enter at BASE and
-interrupts at BASE + 4 * cause code. MODE 2 and 3 are reserved; the register is WARL, and this core (like
-Spike) clears bit 1 on write, so a written MODE 2 reads back 0 and MODE 3 reads back 1.
-
-The program has a 16-entry vector table for M-mode and one for S-mode, plus a direct handler for each.
-Table entry i records (mode, i, cause) in a log and the direct handler records (mode, 0xFF, cause); then
-the trap is serviced (interrupts are acknowledged, exceptions skip the instruction) and the handler
-returns. Each case configures mtvec/stvec, privilege, delegation and one trap source, runs a counting loop
-to completion, and checks the log (which handler and entry ran, with which cause) and the loop result.
-
-The image is assembled from the source below and loaded through the unified_mem backdoor, like
-test_interrupt_sweep.py, so one Verilator build serves every case.
+Direct (MODE 0): every trap enters at BASE. Vectored (MODE 1): exceptions enter at BASE, interrupts at
+BASE + 4 * cause code. MODE is WARL: bit 1 is cleared on write, so 2 reads back 0 and 3 reads back 1.
+Each case configures mtvec/stvec, privilege, delegation and one trap source, and checks which handler
+entry ran with which cause.
 """
 
 import os
@@ -47,7 +39,7 @@ UNMAPPED_VA = 0x4000_0000
 LOOP_COUNT = 200
 DIRECT = 0xFF
 
-# Sv32 identity megapages: V R W X A D (code and data), V R W A D (CLINT). No U pages.
+# Sv32 identity megapages
 MEGAPAGES = {
     INSTR_MEM_BASE: 0xCF,
     DATA_MEM_BASE: 0xCF,
@@ -262,7 +254,7 @@ SECTIONS {{
 M, S = 3, 1
 
 # name, mtvec, stvec, privilege, mideleg, medeleg, action, mmu, expected log [(handler, entry, cause)].
-# A tvec is "vec" (table | 1), "direct" (direct handler), "mode2" (table | 2) or "mode3" (table | 3).
+# A tvec is "vec", "direct", "mode2" or "mode3".
 CASES = [
     ("m_software_vectored", "vec", "vec", M, 0x000, 0x0000, ACTION_SOFTWARE, 0, [("m", 3, 0x8000_0003)]),
     ("m_timer_vectored", "vec", "vec", M, 0x000, 0x0000, ACTION_TIMER, 0, [("m", 7, 0x8000_0007)]),
@@ -290,7 +282,7 @@ CASES = [
     ("m_no_trap_vectored", "vec", "vec", M, 0x000, 0x0000, ACTION_NONE, 0, []),
 ]
 
-# WARL read-backs (ACTION_WARL): MODE 2 reads back as 0, MODE 3 as 1, BASE bits are kept.
+# WARL read-backs (ACTION_WARL)
 WARL_EXPECTED = {8: 0x8000_1000, 12: 0x8000_2001, 16: 0x8000_3004, 20: 0x8000_4001}
 
 
@@ -304,12 +296,10 @@ def _find_repo_root() -> Path:
 
 
 def _build_dir() -> Path:
-    # The runner assembles into tests/build; the simulator runs inside sim_build, so it gets the path.
     return Path(os.environ.get("TRAP_VECTOR_BUILD", Path.cwd() / "build" / "trap_vector"))
 
 
 def assemble(build_dir: Path) -> None:
-    """Assemble the program into image.bin and symbols.txt (called by the runner, before the sim)."""
     build_dir.mkdir(parents=True, exist_ok=True)
     src = build_dir / "trap_vector.S"
     lds = build_dir / "trap_vector.ld"
@@ -327,12 +317,10 @@ def assemble(build_dir: Path) -> None:
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
     symbols = _elf32_symbols(elf.read_bytes())
     (build_dir / "symbols.txt").write_text("".join(f"{value:08x} {name}\n" for name, value in sorted(symbols.items())))
-    # Elaboration needs some image; the real program is loaded through the backdoor.
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 
 def _elf32_symbols(elf: bytes) -> dict:
-    """Name -> value for every named symbol of a little-endian ELF32 file (no binutils needed)."""
     assert elf[:4] == b"\x7fELF" and elf[4] == 1 and elf[5] == 1, "expected a little-endian ELF32 file"
     e_shoff, = struct.unpack_from("<I", elf, 32)
     e_shentsize, e_shnum = struct.unpack_from("<HH", elf, 46)
@@ -412,7 +400,7 @@ async def run_case(dut, mtvec, stvec, privilege, mideleg, medeleg, action, mmu, 
     await ClockCycles(dut.clk, 2)
     dut.rst.value = 0
 
-    # Device-like level interrupt: raised once the loop is about to run, held until the handler acks.
+    # Level interrupt: held until the handler acknowledges it.
     pin = {ACTION_SOFTWARE: dut.software_interrupt, ACTION_EXTERNAL: dut.external_interrupt}.get(action)
     raise_pin = lower_pin = False
     done = False

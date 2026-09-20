@@ -53,8 +53,7 @@ module execution_unit(
     input wire [31:0] mcounteren,
     input wire [31:0] scounteren,
 
-    // Sdtrig: per-trigger enable (privilege and reentrancy already applied),
-    // 4 x {m, 0, s, u, execute, store, load}, and the four tdata2 values.
+    // Sdtrig: per-trigger enable (privilege and reentrancy applied), then the four tdata2 values.
     input wire [3:0] trigger_enabled,
     input wire [27:0] trigger_control,
     input wire [127:0] trigger_tdata2,
@@ -154,8 +153,7 @@ function store_address_misaligned;
     end
 endfunction
 
-// Sdtrig: trigger kinds, and the address a load/store/AMO would use. LR is a load, SC a
-// store and an AMO is both (Sdtrig, A extension), and the trigger fires before the access.
+// Sdtrig: LR is a load, SC a store and an AMO both (Sdtrig, A extension); the match is on the address.
 wire [3:0] trigger_execute = {trigger_control[23], trigger_control[16], trigger_control[9], trigger_control[2]};
 wire [3:0] trigger_store = {trigger_control[22], trigger_control[15], trigger_control[8], trigger_control[1]};
 wire [3:0] trigger_load = {trigger_control[21], trigger_control[14], trigger_control[7], trigger_control[0]};
@@ -288,8 +286,7 @@ always @(*) begin
         jump_addr = interrupt_vector;  // Jump to interrupt handler
         flush_pipeline = 1;
         interrupt_taken = 1;
-    // An execute trigger fires before the instruction runs, ahead of every exception it
-    // could raise itself (privileged spec trap priority, Sdtrig timing 0).
+    // An execute trigger fires before the instruction, ahead of every exception it could raise.
     end else if (execute_trigger_hit) begin
         jump_signal = 1;
         trap_to_supervisor = delegate_breakpoint;
@@ -605,8 +602,7 @@ always @(*) begin
         endcase
     end
 
-    // mtval/stval may hold the faulting instruction on an illegal-instruction
-    // trap (privileged spec 3.1.16); report it, as Spike does.
+    // mtval/stval may hold the faulting instruction (privileged spec 3.1.16); report it, as Spike does.
     if (illegal_instruction_exception) begin
         exception_tval = instr;
     end

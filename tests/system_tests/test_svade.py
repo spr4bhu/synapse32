@@ -1,14 +1,9 @@
 """Svade: accessed and dirty bits are managed by software (privileged spec 4.3.1).
 
-A fetch or data access through a leaf PTE whose A bit is clear, or a write through one whose D bit is clear,
-raises the page fault of that access (12 fetch, 13 load, 15 store/AMO) and hardware never writes the PTE.
-After software sets the bits, the same access succeeds.
-
-The S-mode body runs at VA 0x60000000 on 4 KiB pages with chosen A/D bits, plus one megapage (VA 0x40000000)
-with A clear. Page faults are not delegated: the M-mode handler (bare) logs cause, tval, epc and the leaf PTE
-as it was at the trap, sets A (and D for cause 15) and returns to retry. The M-mode case repeats two accesses
-with MPRV = 1 and MPP = S; there the handler skips the instruction instead. The test compares the log with
-the ELF labels, and the results of the retried accesses with the data preloaded into the pages.
+An access through a leaf PTE with A clear, or a write through one with D clear, raises the page fault
+of that access (12 fetch, 13 load, 15 store/AMO), and hardware never writes the PTE. The M-mode
+handler logs the trap and the leaf PTE as it was, sets the bits and returns to retry, which must then
+succeed with the value preloaded into the page.
 """
 
 import os
@@ -101,7 +96,7 @@ _start:
         csrs    mstatus, t0
         j       body_mprv
 
-# ---- M-mode body with MPRV = 1, MPP = S. mret leaves MPP = U, so reset it after every trap.
+# ---- M-mode body with MPRV = 1, MPP = S
 body_mprv:
         li      a1, {_va(1):#x}
         li      a2, {_va(2):#x}
@@ -130,7 +125,7 @@ finish:
 spin:
         j       spin
 
-# ---- M-mode handler (bare): log cause, tval, epc, leaf PTE; retry after setting A/D, or skip.
+# ---- M-mode handler (bare)
         .align  2
 m_trap:
         csrrw   sp, mscratch, sp
@@ -190,7 +185,7 @@ m_ret:
         csrrw   sp, mscratch, sp
         mret
 
-# ---- S-mode body, linked at PA {BODY_PA:#x} and run at VA {BODY_VA:#x} (page 0, A clear: the first fetch faults).
+# ---- S-mode body, linked at PA {BODY_PA:#x} and run at VA {BODY_VA:#x}
         .section .text.body, "ax"
 body_s:
         li      a1, {_va(1):#x}
@@ -254,12 +249,10 @@ def _find_repo_root() -> Path:
 
 
 def _build_dir() -> Path:
-    # The runner assembles into tests/build; the simulator runs inside sim_build, so it gets the path.
     return Path(os.environ.get("SVADE_BUILD", Path.cwd() / "build" / "svade"))
 
 
 def assemble(build_dir: Path) -> None:
-    """Assemble the program into image.bin and symbols.txt (called by the runner, before the sim)."""
     build_dir.mkdir(parents=True, exist_ok=True)
     src = build_dir / "svade.S"
     lds = build_dir / "svade.ld"
@@ -277,12 +270,10 @@ def assemble(build_dir: Path) -> None:
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
     symbols = _elf32_symbols(elf.read_bytes())
     (build_dir / "symbols.txt").write_text("".join(f"{value:08x} {name}\n" for name, value in sorted(symbols.items())))
-    # Elaboration needs some image; the real program is loaded through the backdoor.
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 
 def _elf32_symbols(elf: bytes) -> dict:
-    """Name -> value for every named symbol of a little-endian ELF32 file (no binutils needed)."""
     assert elf[:4] == b"\x7fELF" and elf[4] == 1 and elf[5] == 1, "expected a little-endian ELF32 file"
     e_shoff, = struct.unpack_from("<I", elf, 32)
     e_shentsize, e_shnum = struct.unpack_from("<HH", elf, 46)

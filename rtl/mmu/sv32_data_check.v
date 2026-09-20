@@ -30,8 +30,7 @@ module sv32_data_check (
         permission_fault = 1'b0;
 
         if (translate_enable) begin
-            // An access that writes (store, SC, AMO) raises only the store/AMO
-            // page fault, even though an AMO also reads (privileged spec 4.3.2).
+            // An access that writes raises only the store/AMO page fault (privileged spec 4.3.2).
             if (!addr_valid_in) begin
                 load_page_fault = data_rd_en && !data_wr_req;
                 store_page_fault = data_wr_req;
@@ -42,8 +41,7 @@ module sv32_data_check (
                                    ((privilege_mode == PRIV_S) && leaf_pte[4] && !sum) ||
                                    ((data_rd_en && !data_wr_req) && !effective_read_ok) ||
                                    (data_wr_req && !leaf_pte[2]) ||
-                                   // Svade: A clear, or D clear on a write, faults;
-                                   // software sets the bits (privileged spec 4.3.1).
+                                   // Svade: A clear, or D clear on a write, faults (privileged spec 4.3.1).
                                    !leaf_pte[6] ||
                                    (data_wr_req && !leaf_pte[7]);
                 if (permission_fault) begin

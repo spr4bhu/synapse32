@@ -32,8 +32,7 @@ module csr_file (
     input wire [31:0] exception_tval_in,
     input wire instret_increment,
     
-    // Trigger module state for the execution unit: 4 x {m, 0, s, u, execute, store, load}
-    // and the four tdata2 values, least significant slice first.
+    // Trigger state for EX: 4 x {m, 0, s, u, execute, store, load}, then the four tdata2 values.
     output wire [27:0] trigger_control,
     output wire [127:0] trigger_tdata2,
 
@@ -143,8 +142,7 @@ module csr_file (
     reg [31:0] satp;
     reg [31:0] pmpcfg0;
     reg [31:0] pmpaddr0;
-    // Sdtrig state. tdata1 holds only the fields this core supports; everything else
-    // reads back 0 (write-any-read-legal), so a write of 0 disables the trigger.
+    // Sdtrig state: tdata1 holds only the supported fields, so a write of 0 disables the trigger.
     reg [1:0] tselect;
     reg [6:0] trigger_ctl [0:3];   // {m, 0, s, u, execute, store, load}
     reg [31:0] trigger_addr [0:3]; // tdata2
@@ -365,8 +363,7 @@ module csr_file (
                     CSR_MIDELEG:  mideleg <= write_data;
                     CSR_MIE:      mie <= write_data;
                     CSR_SIE:      mie <= (mie & ~S_INTERRUPT_MASK) | (write_data & S_INTERRUPT_MASK);
-                    // MODE is WARL: 0 (direct) and 1 (vectored) are legal; reserved 2 and 3
-                    // map to 0 and 1 by clearing bit 1 (privileged spec 3.1.7).
+                    // MODE is WARL: clearing bit 1 maps reserved 2 and 3 onto 0 and 1 (privileged spec 3.1.7).
                     CSR_MTVEC:    mtvec <= {write_data[31:2], 1'b0, write_data[0]};
                     CSR_MCOUNTEREN: mcounteren <= write_data & COUNTEREN_MASK;
                     CSR_MSCRATCH: mscratch <= write_data;
@@ -394,10 +391,9 @@ module csr_file (
                         stip_software_pending <= write_data[5];
                         seip_software_pending <= write_data[9];
                     end
-                    // Only 4 triggers, so tselect is 2 bits wide (Sdtrig enumeration).
+                    // Only 4 triggers, so tselect is 2 bits wide.
                     CSR_TSELECT:  tselect <= write_data[1:0];
-                    // Supported mcontrol fields only: mode and access type. type stays 2,
-                    // dmode/select/timing/action/chain/match/maskmax/hit read back 0.
+                    // Supported mcontrol fields only; type stays 2 and the rest read back 0.
                     CSR_TDATA1:   trigger_ctl[tselect] <= {write_data[6], 1'b0, write_data[4],
                                                            write_data[3], write_data[2],
                                                            write_data[1], write_data[0]};

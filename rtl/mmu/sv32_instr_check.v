@@ -17,8 +17,7 @@ module sv32_instr_check (
         update_accessed = 1'b0;
 
         if (translate_enable) begin
-            // Svade: a fetch from a page whose A bit is clear faults; software
-            // sets A (privileged spec 4.3.1). update_accessed stays 0.
+            // Svade: a fetch through a PTE with A clear faults (privileged spec 4.3.1).
             if (!addr_valid_in ||
                 !leaf_pte[3] ||
                 ((privilege_mode == PRIV_U) && !leaf_pte[4]) ||
