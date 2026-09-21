@@ -1,14 +1,9 @@
-"""Sequential Sv32 walker and TLB (GOAL S2).
+"""Sequential Sv32 walker and TLB.
 
-The walk is an FSM that reads one PTE level at a time over the data memory interface, and its result is
-kept in a TLB. Two things are observable from outside the MMU and this test checks both: the PTE reads
-themselves, which now appear on the data port of the backing store, and how many of them each access needs.
-
-The program runs in S-mode and stores a phase number before each step, so the harness can attribute the PTE
-reads it sees to that step: a first touch of a 4 KiB page walks two levels, a second touch of the same page
-walks nothing, a megapage walks one level, and after SFENCE.VMA or a write to satp the next access walks
-again. The last phases check the walker's faults: an invalid entry at either level, and a megapage whose PPN
-is not aligned. The M-mode handler logs cause and tval and skips the faulting instruction.
+The walk is an FSM that reads one PTE level at a time over the data memory interface, with the
+result kept in a TLB. The test counts PTE reads per phase: a first touch of a page walks two levels,
+a second touch walks none, a megapage walks one, and SFENCE.VMA or a write to satp forces a re-walk.
+It also covers the walker's faults: an invalid entry at either level, and a misaligned megapage.
 """
 
 import os

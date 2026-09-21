@@ -2,7 +2,7 @@
 `include "memory_map.vh"
 
 module top #(
-    // Cycles the backing store takes to answer a fetch or data request (GOAL S1).
+    // Cycles the backing store takes to answer a fetch or data request.
     // 0 is the combinational memory this core has always had.
     parameter MEM_LATENCY = 0
 ) (
@@ -44,7 +44,7 @@ module top #(
     wire cpu_data_sum;
     wire cpu_data_mxr;
     wire [31:0] instr_read_data;
-    // Memory interface (GOAL S1): the core's requests and the adapters' responses.
+    // Memory interface: the core's requests and the adapters' responses.
     wire cpu_instr_gnt;
     wire cpu_instr_rvalid;
     wire cpu_data_req;
@@ -96,7 +96,7 @@ module top #(
     wire mmu_instr_l0_pte_backed;
     wire mmu_data_l1_pte_backed;
     wire mmu_data_l0_pte_backed;
-    // Sequential walker (GOAL S2): the MMU reads PTEs over the data memory interface.
+    // Sequential walker: the MMU reads PTEs over the data memory interface.
     wire mmu_instr_ready;
     wire mmu_data_ready;
     wire mmu_walk_req;
@@ -139,7 +139,7 @@ module top #(
     assign pc_debug = cpu_pc_out;
     assign instr_debug = instr_to_cpu;
     
-    // Memory adapters (GOAL S1). The core presents a physical address and waits for the
+    // Memory adapters. The core presents a physical address and waits for the
     // response; the adapter holds the address for the storage and commits a write once.
     assign cpu_data_req = cpu_mem_read_en || cpu_mem_write_en;
     // The core may only go to memory once its translation is available and did not fault.

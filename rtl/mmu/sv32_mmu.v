@@ -1,7 +1,7 @@
 `default_nettype none
-// Sv32 MMU: TLB plus a sequential page-table walker (GOAL S2).
+// Sv32 MMU: TLB plus a sequential page-table walker.
 //
-// Before stage W the walk was combinational: two PTE reads per access through side ports of the
+// The walk used to be combinational: two PTE reads per access through side ports of the
 // backing store, with a fresh walk for every access. Hardware cannot do that. The walk is now an
 // FSM that issues ordinary reads on the data memory interface, one level at a time, and its
 // result is kept in a TLB. Fetch and data share the one walker; data goes first, because its
@@ -157,7 +157,7 @@ module sv32_mmu (
     assign data_ready = !data_translate_enable || tlb_data_hit || data_fault_match;
 
     assign instr_page_fault = instr_translate_enable && (instr_perm_fault || instr_fault_match);
-    // A write reports only the store/AMO fault, including an AMO's read half (BUGS B15).
+    // A write reports only the store/AMO fault, including an AMO's read half.
     assign data_load_page_fault = data_translate_enable &&
                                   (data_perm_load_fault ||
                                    (data_fault_match && data_rd_en && !data_wr_req));

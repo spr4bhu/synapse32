@@ -1,5 +1,5 @@
 `default_nettype none
-// Fully associative Sv32 TLB with one lookup port for fetch and one for data (GOAL S2).
+// Fully associative Sv32 TLB with one lookup port for fetch and one for data.
 //
 // An entry holds the leaf PTE the walk produced, so permission and A/D checks read it exactly as
 // they read a freshly walked PTE. Megapage entries compare only VPN[1]. The whole TLB is flushed

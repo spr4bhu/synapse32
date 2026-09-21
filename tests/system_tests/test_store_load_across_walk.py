@@ -1,11 +1,10 @@
-"""A store and a load of the same address across a page-table walk (GOAL S2).
+"""A store and a load of the same address across a page-table walk.
 
-A store whose translation misses the TLB waits for the walk; the load that follows must still see the
-stored value. This is the shape of a function prologue and epilogue (`sw ra,12(sp)` … `lw ra,12(sp)`),
-which is where a lost store shows up as a return to the wrong address.
+A store whose translation misses the TLB waits for the walk; the load that follows must still see
+the stored value, the shape of a function prologue and epilogue (sw ra,12(sp) ... lw ra,12(sp)).
 
-The program runs in S-mode and touches pages that are deliberately not in the TLB: each round stores a
-known value through a fresh mapping, fences so the next round walks again, and reads the value back.
+The program runs in S-mode and touches pages deliberately kept out of the TLB: each round stores
+through a fresh mapping, fences so the next round walks again, and reads the value back.
 """
 
 import os

@@ -18,7 +18,7 @@ module riscv_cpu (
     input wire module_store_page_fault_in,
     input wire [31:0] module_page_fault_addr_in,
     input wire module_instr_page_fault_in,
-    // Memory interface (GOAL S1): a request is outstanding until its response arrives.
+    // Memory interface: a request is outstanding until its response arrives.
     input wire module_instr_gnt_in,
     input wire module_instr_rvalid_in,
     input wire module_data_gnt_in,
@@ -26,7 +26,7 @@ module riscv_cpu (
     // The MMU must see an AMO as a write for permission checks and fault causes, including
     // during its read transaction (the write is the second half of the same instruction).
     output wire module_data_write_intent_out,
-    // SFENCE.VMA or a write to satp: the TLB may hold stale translations (GOAL S2).
+    // SFENCE.VMA or a write to satp: the TLB may hold stale translations.
     output wire module_tlb_flush_out,
     output wire module_data_mmu_enable_out,
     output wire [1:0] module_data_privilege_out,
@@ -394,7 +394,7 @@ module riscv_cpu (
     wire atomic_clobbers_store_buf;
 
     // An AMO is a read and then a write on the memory interface: the value written depends on
-    // the value read, so it cannot be one request (GOAL S1). LR is a read, SC is a write.
+    // the value read, so it cannot be one request. LR is a read, SC is a write.
     reg amo_write_phase;
     reg [31:0] amo_read_data;
     wire amo_read_phase;
@@ -411,7 +411,7 @@ module riscv_cpu (
     // FENCE must wait for any queued store to drain.
     wire store_buf_busy_stall = 1'b0;
     wire fence_drain_stall = (id_ex_inst0_instr_id_out == INSTR_FENCE) && store_buf_valid;
-    // Memory wait (GOAL S1). A fetch or access that page-faults never reaches memory, so it is
+    // Memory wait. A fetch or access that page-faults never reaches memory, so it is
     // not waited for. While MEM waits, EX is held and takes none of its effects.
     // A fetch accepted before a redirect answers for the old PC: drop that response, or IF/ID
     // would pair the new PC with a stale instruction word.

@@ -1,14 +1,11 @@
-"""Memory that answers late (GOAL S1).
+"""Memory that answers late.
 
-`top` takes a MEM_LATENCY parameter: the number of cycles the backing store takes to answer a fetch or a
-data access. 0 is the combinational memory the core has always had. With a larger latency the pipeline must
-hold: the PC and IF/ID freeze until the instruction word arrives, and MEM freezes until the access completes,
-while EX takes none of its effects again and WB takes a bubble.
+top takes a MEM_LATENCY parameter, the cycles the backing store takes to answer an access. 0 is
+today's combinational memory; a larger latency holds the pipeline until the response arrives.
 
-The same program runs at latency 0, 1, 2 and 4. Latency 0 is the reference: every later run must commit the
-same stores in the same order, end with the same memory, and retire exactly the same number of instructions,
-while taking more cycles. Interrupts are swept across every cycle of the latency-2 run to check that a trap
-never lands in the middle of an access. The program covers loads, stores, LR/SC, AMO, branches and a jump.
+The same program runs at latency 0, 1, 2 and 4. Every later run must commit the same stores in the
+same order, end with the same memory, and retire the same number of instructions, while taking more
+cycles. Interrupts are swept across every cycle of the latency-2 run.
 """
 
 import json

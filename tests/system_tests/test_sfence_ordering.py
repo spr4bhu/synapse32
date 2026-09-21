@@ -1,13 +1,11 @@
-"""SFENCE.VMA orders what comes after it (GOAL S2, BUGS B17).
+"""SFENCE.VMA orders what comes after it.
 
-Instructions after a fence must run with the translations software installed before it. That is not
-only about the TLB: the core fetches ahead, so an instruction on the next page may already have been
-fetched with the old mapping by the time the fence executes. It has to be discarded and fetched again.
+The core fetches ahead, so an instruction on the next page may already be fetched under the old
+mapping when the fence executes; it must be discarded and fetched again.
 
 The program puts the store and the fence in the last words of a page, so the next page is being
-fetched (and its translation walked) while they execute. The store repoints that page at different
-code; the marker it writes says which mapping the core actually used. Without the front-end flush the
-core runs a mixture of both pages, which is how this bug was found.
+fetched while they execute. The store repoints that page at different code; the marker it writes
+says which mapping the core actually used.
 """
 
 import os

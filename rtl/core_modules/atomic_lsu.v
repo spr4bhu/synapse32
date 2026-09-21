@@ -9,7 +9,7 @@ module atomic_lsu (
     input wire [31:0] rs2_value_mem,
     input wire [31:0] mem_read_data,
     // High while the MEM stage waits for memory: the access has not happened yet, so the
-    // reservation must not change (GOAL S1).
+    // reservation must not change.
     input wire mem_hold,
     input wire non_atomic_store_write_enable,
     input wire [31:0] non_atomic_store_write_addr,

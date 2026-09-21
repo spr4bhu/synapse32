@@ -1,41 +1,15 @@
-"""SFENCE.VMA while a page-table walk is in flight (GOAL S2, stage W2c).
+"""SFENCE.VMA while a page-table walk is in flight.
 
-An Sv32 walk is two dependent reads. If software fences between them, the level-1 pointer the walker
-is holding may already belong to a page table nothing uses any more, so the entry that walk would fill
-must be dropped and the access walked again. `sv32_mmu.v` does that with `walk_aborted`.
+An Sv32 walk is two dependent reads; a fence between them must drop the entry the walk would fill,
+since the pointer it holds may belong to a page table nothing uses any more. sv32_mmu.v does that
+with walk_aborted. This runs a program that fences while a walk is running, at every MEM_LATENCY,
+and checks which page table the core actually executed from afterward.
 
-This is the toplevel test for that ordering. It runs a program that fences while a walk is running and
-checks what the core actually executed afterwards:
-
-    0xFF4  lw   t1, 0(t5)   the new root PTE
-    0xFF8  sw   t1, 0(t0)   the root entry now points at a different level-0 table
-    0xFFC  sfence.vma       last word of page A; page B is already being walked
-    0x1000 page B           reached by falling through the fence
-
-Both level-0 tables map page A identically, so page A runs the same either way; they differ only in
-page B, and the marker page B writes says which table the core walked. The data megapage is warmed
-first, because the single walker serves data before instructions and a store that itself needed a walk
-would serialise behind the instruction walk.
-
-**What this does not prove.** It is not a discriminator for `walk_aborted`: the same program passes
-with the guard deleted (measured, W2c in PROGRESS.md — only the PTE-read count changes, 7 to 6,
-because the guard costs one re-walk). The guard exists for a walk that is carrying a *stale* pointer
-across the fence, and that cannot be reached from a program on this pipeline. A walk only starts when
-fetch reaches an untranslated page, and after that the walker issues its second read as soon as its
-first returns and the data bus is free. To make the second read late, the core has to keep the bus
-busy, and every instruction that could do so has to be fetched after the walk started — which takes at
-least three cycles, by which time the walk has finished. Every arrangement that gets the walker to
-read the root entry early enough to hold a stale pointer also lets the store commit before that read
-samples memory, so what the walker carries across the fence is the new pointer, not the old one.
-
-So the coverage this does reach is recorded rather than asserted away: the fence lands inside a walk at
-every latency, and at latencies 2 and 4 it lands after that walk has already read a PTE. The hand-run
-`tests/manual/test_mmu_walk_flush_unit.py` remains the only proof of the guard itself, which is why it
-exists. The guard stays regardless: it is correct, it costs one re-walk in a case that occurs twice in
-this program, and a fetch buffer or a data cache would make the unreachable case reachable.
-
-`MEM_LATENCY` is swept because the timing of the whole interaction depends on it, and the architectural
-result is asserted at every latency.
+It is not a discriminator for walk_aborted itself: the same program passes with the guard deleted,
+because the stale-pointer case it guards cannot be reached from a program on this pipeline (the
+walker's second read always lands before any instruction that could hold the bus finishes fetching).
+What it does cover is fence ordering against a running walk. tests/manual/test_mmu_walk_flush_unit.py
+remains the only proof of the guard itself.
 """
 
 import json

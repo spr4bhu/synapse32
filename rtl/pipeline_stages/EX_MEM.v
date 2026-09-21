@@ -57,7 +57,7 @@ module EX_MEM (
             instr_id_out <= 7'b0;
             rd_valid_out <= 1'b0;
         end else if (hold) begin
-            // MEM is waiting for memory: keep the access in place (GOAL S1).
+            // MEM is waiting for memory: keep the access in place.
             rs1_addr_out <= rs1_addr_out;
             rs2_addr_out <= rs2_addr_out;
             rd_addr_out <= rd_addr_out;

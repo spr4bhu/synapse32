@@ -12,7 +12,7 @@ module execution_unit(
     input wire rs2_valid,
     input wire instr_valid,
     // Low while the MEM stage waits for memory: the instruction stays in EX, so none of its
-    // effects may be taken more than once (GOAL S1).
+    // effects may be taken more than once.
     input wire stage_enable,
     input wire [31:0] pc_input,
     input wire [31:0] instr,

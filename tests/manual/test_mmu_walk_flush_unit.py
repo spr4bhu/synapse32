@@ -1,4 +1,4 @@
-"""A fence that lands while a page-table walk is in flight (GOAL S2).
+"""A fence that lands while a page-table walk is in flight.
 
 SFENCE.VMA means every translation software might have changed is gone. A walk that was already
 reading page-table entries when the fence arrived may therefore be carrying a stale entry, so its
@@ -8,10 +8,10 @@ sees what software just wrote.
 This drives `sv32_mmu` directly, because the timing has to be exact: the fence is asserted between
 the walk's last page-table read and its fill, which a program cannot schedule reliably (the
 program-level version of this race became `tests/system_tests/test_sfence_ordering.py`, which finds a
-different bug, B17, and never reaches the walker's guard). Removing the guard from `sv32_mmu.v` makes
+different bug, the missing fetch discard, and never reaches the walker's guard). Removing the guard from `sv32_mmu.v` makes
 this test fail; with the guard it passes.
 
-It is run by hand, not by the gate (user decision 2026-09-16): a module-level simulation late in the
+It is run by hand, not by the gate: a module-level simulation late in the
 gate's single pytest process crashes the simulator (`error -11`). From `tests/`:
 
     docker run --rm --platform linux/arm64 -v "$PWD/..:/repo" -v synapse32-gate-arm64:/work \

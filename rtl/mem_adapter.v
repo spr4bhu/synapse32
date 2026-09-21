@@ -1,5 +1,5 @@
 `default_nettype none
-// Memory adapter: turns the combinational backing store into a request/response port (GOAL S1).
+// Memory adapter: turns the combinational backing store into a request/response port.
 //
 // Protocol (the shape Ibex, CV32E40P and the OBI spec use, one outstanding transaction):
 //   address phase:  the core holds req, addr, we, be and wdata until gnt;
