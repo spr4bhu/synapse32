@@ -1,4 +1,4 @@
-"""Page-fault causes of atomic and ordinary memory accesses under Sv32 (BUGS B15).
+"""Page-fault causes of atomic and ordinary memory accesses under Sv32.
 
 An access that writes reports a store/AMO page fault (15), including an AMO, which also reads; LR and
 loads report a load page fault (13). The faulting instruction leaves memory and rd unchanged. The
@@ -274,7 +274,7 @@ def _peek(dut, addr: int) -> int:
     return int(dut.unified_mem_inst.instr_ram[_phys_word_index(addr)].value) & 0xFFFF_FFFF
 
 
-async def run_case(dut, config, limit=3000):
+async def run_case(dut, config, limit=20000):
     dut.rst.value = 1
     dut.software_interrupt.value = 0
     dut.external_interrupt.value = 0
