@@ -83,6 +83,14 @@ module sv32_tlb #(
                 entry_valid[i] <= 1'b0;
             end
         end else if (fill_en) begin
+            // Drop any entry already covering this address, so a Svadu refill never leaves two matches.
+            for (i = 0; i < ENTRIES; i = i + 1) begin
+                if (entry_valid[i] &&
+                    (entry_megapage[i] ? (entry_tag[i][19:10] == fill_vaddr[31:22])
+                                       : (entry_tag[i] == fill_vaddr[31:12]))) begin
+                    entry_valid[i] <= 1'b0;
+                end
+            end
             entry_valid[next_victim] <= 1'b1;
             entry_tag[next_victim] <= fill_vaddr[31:12];
             entry_megapage[next_victim] <= fill_megapage;

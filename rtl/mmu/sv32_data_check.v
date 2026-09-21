@@ -8,6 +8,7 @@ module sv32_data_check (
     input  wire        mxr,
     input  wire        data_rd_en,
     input  wire        data_wr_req,
+    input  wire        adue,
     input  wire [31:0] leaf_pte,
     output reg         load_page_fault,
     output reg         store_page_fault,
@@ -36,17 +37,21 @@ module sv32_data_check (
                 store_page_fault = data_wr_req;
             end else begin
                 effective_read_ok = leaf_pte[1] || (mxr && leaf_pte[3]);
+                // Permission decides first, whatever ADUE says (privileged spec 4.3.1).
                 permission_fault = !leaf_pte[0] ||
                                    ((privilege_mode == PRIV_U) && !leaf_pte[4]) ||
                                    ((privilege_mode == PRIV_S) && leaf_pte[4] && !sum) ||
                                    ((data_rd_en && !data_wr_req) && !effective_read_ok) ||
-                                   (data_wr_req && !leaf_pte[2]) ||
-                                   // Svade: A clear, or D clear on a write, faults (privileged spec 4.3.1).
-                                   !leaf_pte[6] ||
-                                   (data_wr_req && !leaf_pte[7]);
+                                   (data_wr_req && !leaf_pte[2]);
                 if (permission_fault) begin
                     load_page_fault = data_rd_en && !data_wr_req;
                     store_page_fault = data_wr_req;
+                end else if (!leaf_pte[6] || (data_wr_req && !leaf_pte[7])) begin
+                    // A or D shortfall: Svade (ADUE = 0) faults, Svadu (ADUE = 1) has the walker set them.
+                    load_page_fault = !adue && data_rd_en && !data_wr_req;
+                    store_page_fault = !adue && data_wr_req;
+                    update_accessed = adue && !leaf_pte[6];
+                    update_dirty = adue && data_wr_req && !leaf_pte[7];
                 end
             end
         end

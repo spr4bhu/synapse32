@@ -32,6 +32,8 @@ module riscv_cpu (
     output wire [31:0] module_satp_out,
     output wire module_data_sum_out,
     output wire module_data_mxr_out,
+    // Svadu: menvcfg.ADUE, forwarded to the MMU's walker
+    output wire module_menvcfg_adue_out,
     output wire module_instr_mmu_enable_out,
     output wire [1:0] module_instr_privilege_out,
 
@@ -532,6 +534,7 @@ module riscv_cpu (
         .exception_tval_in(csr_exception_tval),
         .trigger_control(trigger_control),
         .trigger_tdata2(trigger_tdata2),
+        .menvcfg_adue_out(module_menvcfg_adue_out),
         .instret_increment(instret_increment),
         .timer_interrupt(timer_interrupt),
         .software_interrupt(software_interrupt),

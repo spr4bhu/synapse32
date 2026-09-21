@@ -36,6 +36,9 @@ module csr_file (
     output wire [27:0] trigger_control,
     output wire [127:0] trigger_tdata2,
 
+    // Svadu: menvcfg.ADUE, the page walker's hardware A/D update enable
+    output wire menvcfg_adue_out,
+
     // Timer interrupt input
     input wire timer_interrupt,
     input wire software_interrupt,
@@ -149,11 +152,14 @@ module csr_file (
     reg ssip_software_pending;
     reg stip_software_pending;
     reg seip_software_pending;
+    // menvcfg.ADUE (bit 61, menvcfgh bit 29) enables hardware A/D update; other bits read 0.
+    reg menvcfg_adue;
 
     localparam [3:0] TDATA1_TYPE_MCONTROL = 4'd2;
     wire [31:0] tdata1_read = {TDATA1_TYPE_MCONTROL, 21'b0, trigger_ctl[tselect]};
     assign trigger_control = {trigger_ctl[3], trigger_ctl[2], trigger_ctl[1], trigger_ctl[0]};
     assign trigger_tdata2 = {trigger_addr[3], trigger_addr[2], trigger_addr[1], trigger_addr[0]};
+    assign menvcfg_adue_out = menvcfg_adue;
 
     wire [31:0] sstatus = mstatus & SSTATUS_MASK;
     wire [31:0] sie = mie & S_INTERRUPT_MASK;
@@ -270,6 +276,7 @@ module csr_file (
             ssip_software_pending <= 1'b0;
             stip_software_pending <= 1'b0;
             seip_software_pending <= 1'b0;
+            menvcfg_adue <= 1'b0;
         end else begin
             if (cycle_enabled && !writes_mcycle) begin
                 cycle_counter <= cycle_counter + 64'h1;
@@ -398,6 +405,8 @@ module csr_file (
                                                            write_data[3], write_data[2],
                                                            write_data[1], write_data[0]};
                     CSR_TDATA2:   trigger_addr[tselect] <= write_data;
+                    // Only ADUE is implemented; the rest of menvcfg is WARL zero.
+                    CSR_MENVCFGH: menvcfg_adue <= write_data[29];
                     CSR_PMPCFG0:  pmpcfg0 <= write_data;
                     CSR_PMPADDR0: pmpaddr0 <= write_data;
                     CSR_MCYCLE:   cycle_counter[31:0] <= write_data;
@@ -447,6 +456,8 @@ module csr_file (
                 CSR_CYCLEH:   read_data = cycle_counter[63:32];
                 CSR_TIMEH:    read_data = cycle_counter[63:32];
                 CSR_INSTRETH: read_data = instret_counter[63:32];
+                CSR_MENVCFG:  read_data = 32'h0;
+                CSR_MENVCFGH: read_data = {2'b0, menvcfg_adue, 29'b0};
                 CSR_PMPCFG0:  read_data = 32'h0;
                 CSR_PMPADDR0: read_data = 32'h0;
                 CSR_TSELECT:  read_data = {30'b0, tselect};

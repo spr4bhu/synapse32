@@ -99,6 +99,9 @@ module top #(
     wire mmu_data_ready;
     wire mmu_walk_req;
     wire [31:0] mmu_walk_addr;
+    wire mmu_walk_we;
+    wire [31:0] mmu_walk_wdata;
+    wire cpu_menvcfg_adue;
     wire mmu_walk_gnt;
     wire mmu_walk_rvalid;
     wire cpu_tlb_flush;
@@ -186,9 +189,9 @@ module top #(
         .rst(rst),
         .req(data_bus_walk_sel ? 1'b1 : cpu_data_bus_req),
         .addr(data_bus_walk_sel ? mmu_walk_addr : phys_data_addr),
-        .we(data_bus_walk_sel ? 1'b0 : cpu_mem_write_en),
+        .we(data_bus_walk_sel ? mmu_walk_we : cpu_mem_write_en),
         .be(data_bus_walk_sel ? 4'b1111 : cpu_write_byte_enable),
-        .wdata(data_bus_walk_sel ? 32'b0 : cpu_mem_write_data),
+        .wdata(data_bus_walk_sel ? mmu_walk_wdata : cpu_mem_write_data),
         .gnt(adapter_data_gnt),
         .rvalid(adapter_data_rvalid),
         .rdata(cpu_data_rdata),
@@ -233,6 +236,7 @@ module top #(
         .module_satp_out(cpu_satp),
         .module_data_sum_out(cpu_data_sum),
         .module_data_mxr_out(cpu_data_mxr),
+        .module_menvcfg_adue_out(cpu_menvcfg_adue),
         .module_instr_mmu_enable_out(cpu_instr_mmu_enable),
         .module_instr_privilege_out(cpu_instr_privilege)
     );
@@ -264,8 +268,11 @@ module top #(
         .data_load_page_fault(cpu_load_page_fault),
         .data_store_page_fault(cpu_store_page_fault),
         .data_fault_addr(mmu_data_fault_addr),
+        .adue(cpu_menvcfg_adue),
         .walk_req(mmu_walk_req),
         .walk_addr(mmu_walk_addr),
+        .walk_we(mmu_walk_we),
+        .walk_wdata(mmu_walk_wdata),
         .walk_gnt(mmu_walk_gnt),
         .walk_rvalid(mmu_walk_rvalid),
         .walk_rdata(cpu_data_rdata)
@@ -282,8 +289,10 @@ module top #(
         .instr_addr_p2(data_store_addr),
         .data_wr_req(data_store_req && data_store_we && ram_access),
         .data_rd_en(data_store_req && !data_store_we && ram_access),
-        // A write lands once, in the cycle the adapter commits it.
-        .wr_en(data_write_fire && ram_access && !cpu_store_page_fault),
+        // A write lands once, when the adapter commits it. A walker PTE write lands even while the
+        // core's own access is held on a store page fault.
+        .wr_en(data_write_fire && ram_access &&
+               (data_bus_walk_owns || !cpu_store_page_fault)),
         .write_byte_enable(data_store_be),
         .wr_data(data_store_wdata),
         // A walk reads a whole PTE word; the core's load type applies to its own accesses.

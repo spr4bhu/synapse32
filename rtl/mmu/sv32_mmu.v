@@ -10,6 +10,8 @@ module sv32_mmu (
     input wire [31:0] satp,
     input wire data_sum,
     input wire data_mxr,
+    // Svadu: menvcfg.ADUE. 0 is Svade, where an A/D shortfall is a page fault.
+    input wire adue,
 
     // Instruction side
     input wire instr_translate_enable,
@@ -31,9 +33,11 @@ module sv32_mmu (
     output wire data_store_page_fault,
     output wire [31:0] data_fault_addr,
 
-    // Walk port on the data memory interface
+    // Walk port on the data memory interface; with Svadu the walker also writes PTEs.
     output wire walk_req,
     output wire [31:0] walk_addr,
+    output wire walk_we,
+    output wire [31:0] walk_wdata,
     input wire walk_gnt,
     input wire walk_rvalid,
     input wire [31:0] walk_rdata
@@ -42,6 +46,7 @@ module sv32_mmu (
     localparam [1:0] WALK_IDLE = 2'd0;
     localparam [1:0] WALK_LEVEL1 = 2'd1;
     localparam [1:0] WALK_LEVEL0 = 2'd2;
+    localparam [1:0] WALK_UPDATE = 2'd3;
 
     localparam SIDE_DATA = 1'b0;
     localparam SIDE_INSTR = 1'b1;
@@ -90,20 +95,21 @@ module sv32_mmu (
 
     // Permission checks on the leaf PTE
     wire instr_perm_fault;
-    wire instr_update_accessed_unused;
+    wire instr_needs_accessed;
     sv32_instr_check instr_perm_check (
         .translate_enable(instr_translate_enable && tlb_instr_hit),
         .addr_valid_in(1'b1),
         .privilege_mode(instr_priv_mode),
+        .adue(adue),
         .leaf_pte(tlb_instr_pte),
         .page_fault(instr_perm_fault),
-        .update_accessed(instr_update_accessed_unused)
+        .update_accessed(instr_needs_accessed)
     );
 
     wire data_perm_load_fault;
     wire data_perm_store_fault;
-    wire data_update_accessed_unused;
-    wire data_update_dirty_unused;
+    wire data_needs_accessed;
+    wire data_needs_dirty;
     sv32_data_check data_perm_check (
         .translate_enable(data_translate_enable && tlb_data_hit),
         .addr_valid_in(1'b1),
@@ -112,12 +118,18 @@ module sv32_mmu (
         .mxr(data_mxr),
         .data_rd_en(data_rd_en),
         .data_wr_req(data_wr_req),
+        .adue(adue),
         .leaf_pte(tlb_data_pte),
         .load_page_fault(data_perm_load_fault),
         .store_page_fault(data_perm_store_fault),
-        .update_accessed(data_update_accessed_unused),
-        .update_dirty(data_update_dirty_unused)
+        .update_accessed(data_needs_accessed),
+        .update_dirty(data_needs_dirty)
     );
+
+    // With Svadu, a hit whose PTE lacks A (or D for a write) is a miss, so the walker sets them.
+    wire instr_ad_update = instr_translate_enable && tlb_instr_hit && instr_needs_accessed;
+    wire data_ad_update = data_translate_enable && tlb_data_hit &&
+                          (data_needs_accessed || data_needs_dirty);
 
     // Address translation outputs
     function [31:0] translated_addr;
@@ -136,8 +148,10 @@ module sv32_mmu (
                             translated_addr(tlb_data_pte, tlb_data_megapage, data_virtual_addr);
     assign data_fault_addr = data_virtual_addr;
 
-    assign instr_ready = !instr_translate_enable || tlb_instr_hit || instr_fault_match;
-    assign data_ready = !data_translate_enable || tlb_data_hit || data_fault_match;
+    assign instr_ready = !instr_translate_enable ||
+                         (tlb_instr_hit && !instr_ad_update) || instr_fault_match;
+    assign data_ready = !data_translate_enable ||
+                        (tlb_data_hit && !data_ad_update) || data_fault_match;
 
     assign instr_page_fault = instr_translate_enable && (instr_perm_fault || instr_fault_match);
     // A write reports only the store/AMO fault, including an AMO's read half.
@@ -149,8 +163,9 @@ module sv32_mmu (
 
     // Walker. While a fill is being written the lookups still miss, so no new walk starts.
     wire data_walk_needed = data_translate_enable && (data_rd_en || data_wr_req) &&
-                            !tlb_data_hit && !data_fault_match && !fill_en;
-    wire instr_walk_needed = instr_translate_enable && !tlb_instr_hit && !instr_fault_match && !fill_en;
+                            (!tlb_data_hit || data_ad_update) && !data_fault_match && !fill_en;
+    wire instr_walk_needed = instr_translate_enable &&
+                             (!tlb_instr_hit || instr_ad_update) && !instr_fault_match && !fill_en;
 
     reg [1:0] walk_state;
     // A flush mid-walk may leave the entry it would fill stale, so the walk is abandoned.
@@ -159,11 +174,62 @@ module sv32_mmu (
     reg [31:0] walk_vaddr;
     reg [31:0] walk_level0_base;
     reg walk_accepted;
+    // The walk's access context, captured at its start; the requester is held while it runs.
+    reg walk_is_write;
+    reg walk_is_read;
+    reg [1:0] walk_priv;
+    // Svadu: the leaf PTE's address and the value to write back with A/D set.
+    reg [31:0] walk_pte_addr;
+    reg [31:0] walk_pte_wdata;
 
     assign walk_req = (walk_state != WALK_IDLE) && !walk_accepted;
-    assign walk_addr = (walk_state == WALK_LEVEL1)
+    assign walk_addr = (walk_state == WALK_UPDATE) ? walk_pte_addr :
+                       (walk_state == WALK_LEVEL1)
                        ? (root_pt_base + {20'b0, walk_vaddr[31:22], 2'b00})
                        : (walk_level0_base + {20'b0, walk_vaddr[21:12], 2'b00});
+    assign walk_we = (walk_state == WALK_UPDATE);
+    assign walk_wdata = walk_pte_wdata;
+
+    // The same checks on the freshly walked PTE, deciding whether A/D must be set first.
+    wire walk_instr_fault;
+    wire walk_instr_needs_accessed;
+    sv32_instr_check walk_instr_check (
+        .translate_enable(walk_side == SIDE_INSTR),
+        .addr_valid_in(1'b1),
+        .privilege_mode(walk_priv),
+        .adue(adue),
+        .leaf_pte(walk_rdata),
+        .page_fault(walk_instr_fault),
+        .update_accessed(walk_instr_needs_accessed)
+    );
+
+    wire walk_data_load_fault;
+    wire walk_data_store_fault;
+    wire walk_data_needs_accessed;
+    wire walk_data_needs_dirty;
+    sv32_data_check walk_data_check (
+        .translate_enable(walk_side == SIDE_DATA),
+        .addr_valid_in(1'b1),
+        .privilege_mode(walk_priv),
+        .sum(data_sum),
+        .mxr(data_mxr),
+        .data_rd_en(walk_is_read),
+        .data_wr_req(walk_is_write),
+        .adue(adue),
+        .leaf_pte(walk_rdata),
+        .load_page_fault(walk_data_load_fault),
+        .store_page_fault(walk_data_store_fault),
+        .update_accessed(walk_data_needs_accessed),
+        .update_dirty(walk_data_needs_dirty)
+    );
+
+    // Only when the access is otherwise permitted, which the checks above already require.
+    wire walk_needs_update = (walk_side == SIDE_INSTR)
+                             ? walk_instr_needs_accessed
+                             : (walk_data_needs_accessed || walk_data_needs_dirty);
+    wire [31:0] walk_updated_pte =
+        walk_rdata | 32'h40 |
+        (((walk_side == SIDE_DATA) && walk_data_needs_dirty) ? 32'h80 : 32'h00);
 
     // Usable PTE: V set, not W without R, and a PPN that fits 32-bit physical space.
     function pte_usable;
@@ -188,6 +254,11 @@ module sv32_mmu (
             walk_level0_base <= 32'b0;
             walk_accepted <= 1'b0;
             walk_aborted <= 1'b0;
+            walk_is_write <= 1'b0;
+            walk_is_read <= 1'b0;
+            walk_priv <= 2'b00;
+            walk_pte_addr <= 32'b0;
+            walk_pte_wdata <= 32'b0;
             fill_en <= 1'b0;
             fill_vaddr <= 32'b0;
             fill_pte <= 32'b0;
@@ -219,10 +290,16 @@ module sv32_mmu (
                     if (data_walk_needed) begin
                         walk_side <= SIDE_DATA;
                         walk_vaddr <= data_virtual_addr;
+                        walk_is_read <= data_rd_en;
+                        walk_is_write <= data_wr_req;
+                        walk_priv <= data_priv_mode;
                         walk_state <= WALK_LEVEL1;
                     end else if (instr_walk_needed) begin
                         walk_side <= SIDE_INSTR;
                         walk_vaddr <= instr_virtual_addr;
+                        walk_is_read <= 1'b0;
+                        walk_is_write <= 1'b0;
+                        walk_priv <= instr_priv_mode;
                         walk_state <= WALK_LEVEL1;
                     end
                 end
@@ -249,14 +326,36 @@ module sv32_mmu (
                             end
                             walk_state <= WALK_IDLE;
                         end else if (pte_is_leaf(walk_rdata)) begin
-                            fill_en <= 1'b1;
-                            fill_vaddr <= walk_vaddr;
-                            fill_pte <= walk_rdata;
                             fill_megapage <= (walk_state == WALK_LEVEL1);
-                            walk_state <= WALK_IDLE;
+                            if (walk_needs_update) begin
+                                // Svadu: write A (and D) back before the access uses this translation.
+                                walk_pte_addr <= walk_addr;
+                                walk_pte_wdata <= walk_updated_pte;
+                                walk_state <= WALK_UPDATE;
+                            end else begin
+                                fill_en <= 1'b1;
+                                fill_vaddr <= walk_vaddr;
+                                fill_pte <= walk_rdata;
+                                walk_state <= WALK_IDLE;
+                            end
                         end else begin
                             walk_level0_base <= {walk_rdata[29:10], 12'b0};
                             walk_state <= WALK_LEVEL0;
+                        end
+                    end
+                end
+                WALK_UPDATE: begin
+                    if (walk_gnt) begin
+                        walk_accepted <= 1'b1;
+                    end
+                    // Wait for the write response, so the PTE lands before the entry is used.
+                    if (walk_rvalid) begin
+                        walk_accepted <= 1'b0;
+                        walk_state <= WALK_IDLE;
+                        if (!walk_aborted && !flush_tlb) begin
+                            fill_en <= 1'b1;
+                            fill_vaddr <= walk_vaddr;
+                            fill_pte <= walk_pte_wdata;
                         end
                     end
                 end

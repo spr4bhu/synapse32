@@ -591,8 +591,9 @@ async def run_trial(dut, scenario_index, variant, entry_addr, inject_cycle, limi
         await ReadOnly()
         if want_entry and trial.entry_cycle is None and int(dut.pc_debug.value) == entry_addr:
             trial.entry_cycle = cycle
-        # Count a store once, when memory accepts it; a page-faulting store is not committed.
-        if int(dut.data_write_fire.value) and not int(dut.cpu_store_page_fault.value):
+        # Count a store once, when memory accepts it; skip page-faulting stores and walker A/D writes.
+        if (int(dut.data_write_fire.value) and not int(dut.cpu_store_page_fault.value)
+                and not int(dut.data_bus_walk_owns.value)):
             addr = int(dut.cpu_mem_write_addr.value)
             if RESULT_LO <= addr < RESULT_HI:
                 trial.stores.append((addr, int(dut.cpu_mem_write_data.value), int(dut.cpu_write_byte_enable.value)))
