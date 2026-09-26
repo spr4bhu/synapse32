@@ -852,7 +852,8 @@ module riscv_cpu (
     assign module_load_type = ex_mem_read_type;
     assign module_data_write_intent_out = module_mem_wr_en || is_amo_w;
     assign mem_stage_load_page_fault = module_load_page_fault_in && ex_mem_read_req;
-    assign mem_stage_store_page_fault = module_store_page_fault_in && module_mem_wr_en;
+    // An AMO's read half takes its store/AMO page fault, or MEM would wait on a blocked write.
+    assign mem_stage_store_page_fault = module_store_page_fault_in && module_data_write_intent_out;
     assign mem_stage_page_fault_taken = mem_stage_load_page_fault || mem_stage_store_page_fault;
     assign mem_stage_trap_to_supervisor =
         (csr_file_inst.privilege_mode != PRIV_M) &&

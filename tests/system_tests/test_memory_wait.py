@@ -5,7 +5,8 @@ today's combinational memory; a larger latency holds the pipeline until the resp
 
 The same program runs at latency 0, 1, 2 and 4. Every later run must commit the same stores in the
 same order, end with the same memory, and retire the same number of instructions, while taking more
-cycles. Interrupts are swept across every cycle of the latency-2 run.
+cycles. Interrupts are swept across every cycle of the latency-2 run. A second program checks that
+each load from the UART data register pops exactly one received byte.
 """
 
 import json
@@ -33,6 +34,9 @@ RESULT_HI = RESULT_LO + 4 * RESULT_WORDS
 DONE_ADDR = 0x1000_0300
 DONE_VALUE = 0x444F_4E45
 ACK_ADDR = 0x1000_0304
+UART_RBR = 0x2000_0000
+UART_GO = 0x1000_0400
+UART_RESULT = 0x1000_0404
 M_SCRATCH = 0x1000_0800
 LOOPS = 8
 # Each AMO is a read then a write, so MEM waits even when memory answers in the same cycle.
@@ -112,6 +116,27 @@ m_ret:
         mret
 """
 
+UART_PROGRAM = f"""
+        .section .text.init, "ax"
+        .global _start
+_start:
+        li      a0, {UART_RBR:#x}
+        li      a1, {UART_GO:#x}
+wait_go:
+        lw      t0, 0(a1)
+        beqz    t0, wait_go
+        lw      t1, 0(a0)
+        lw      t2, 0(a0)
+        li      a2, {UART_RESULT:#x}
+        sw      t1, 0(a2)
+        sw      t2, 4(a2)
+        li      t0, {DONE_ADDR:#x}
+        li      t1, {DONE_VALUE:#x}
+        sw      t1, 0(t0)
+spin:
+        j       spin
+"""
+
 LINKER_SCRIPT = f"""
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
@@ -135,12 +160,11 @@ def _build_dir() -> Path:
     return Path(os.environ.get("MEMORY_WAIT_BUILD", Path.cwd() / "build" / "memory_wait"))
 
 
-def assemble(build_dir: Path) -> None:
-    build_dir.mkdir(parents=True, exist_ok=True)
-    src = build_dir / "memory_wait.S"
+def _compile(build_dir: Path, name: str, program: str) -> None:
+    src = build_dir / f"{name}.S"
     lds = build_dir / "memory_wait.ld"
-    elf = build_dir / "memory_wait.elf"
-    src.write_text(PROGRAM)
+    elf = build_dir / f"{name}.elf"
+    src.write_text(program)
     lds.write_text(LINKER_SCRIPT)
     subprocess.run(
         [
@@ -150,7 +174,13 @@ def assemble(build_dir: Path) -> None:
         ],
         check=True,
     )
-    subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / "image.bin")], check=True)
+    subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(build_dir / f"{name}.bin")], check=True)
+
+
+def assemble(build_dir: Path) -> None:
+    build_dir.mkdir(parents=True, exist_ok=True)
+    _compile(build_dir, "image", PROGRAM)
+    _compile(build_dir, "uart", UART_PROGRAM)
     (build_dir / "nop.hex").write_text("@00000000\n" + "00000013 00000013 00000013 00000013\n" * 128)
 
 
@@ -170,8 +200,8 @@ def _peek(dut, addr: int) -> int:
     return int(dut.unified_mem_inst.instr_ram[_phys_word_index(addr)].value) & 0xFFFF_FFFF
 
 
-def _load_image(dut, build_dir: Path) -> None:
-    data = (build_dir / "image.bin").read_bytes()
+def _load_image(dut, build_dir: Path, name: str = "image.bin") -> None:
+    data = (build_dir / name).read_bytes()
     data += b"\x00" * (-len(data) % 4)
     for offset in range(0, len(data), 4):
         _poke(dut, INSTR_MEM_BASE + offset, int.from_bytes(data[offset:offset + 4], "little"))
@@ -305,6 +335,44 @@ async def test_interrupt_during_wait_is_transparent(dut):
             failures.append(f"interrupt at cycle {inject}: final memory differs")
     dut._log.info(f"latency {latency}: swept {reference.cycles + 1} interrupt cycles, {len(failures)} failures")
     assert not failures, f"{len(failures)} interrupt cycles not transparent; first: {failures[0]}"
+
+
+async def _send_byte(dut, value: int) -> None:
+    bit_cycles = int(dut.uart_inst.baud_div.value) + 1
+    for bit in [0] + [(value >> i) & 1 for i in range(8)] + [1]:
+        dut.uart_rx.value = bit
+        await ClockCycles(dut.clk, bit_cycles)
+
+
+@cocotb.test()
+async def test_uart_read_pops_one_byte(dut):
+    """Three bytes wait in the UART; two loads from its data register must return the first two.
+
+    A third byte is needed: once the queue empties, the register shows the last byte received.
+    """
+    latency = int(os.environ["MEMORY_WAIT_LATENCY"])
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    _load_image(dut, _build_dir(), "uart.bin")
+    for addr in (UART_GO, UART_RESULT, UART_RESULT + 4, DONE_ADDR):
+        _poke(dut, addr, 0)
+    dut.rst.value = 1
+    dut.software_interrupt.value = 0
+    dut.external_interrupt.value = 0
+    dut.uart_rx.value = 1
+    await ClockCycles(dut.clk, 2)
+    dut.rst.value = 0
+
+    await _send_byte(dut, ord("A"))
+    await _send_byte(dut, ord("B"))
+    await _send_byte(dut, ord("C"))
+    _poke(dut, UART_GO, 1)
+    for _ in range(2000):
+        await RisingEdge(dut.clk)
+        if _peek(dut, DONE_ADDR) == DONE_VALUE:
+            break
+    assert _peek(dut, DONE_ADDR) == DONE_VALUE, f"latency {latency}: the program did not finish"
+    got = [chr(_peek(dut, UART_RESULT) & 0xFF), chr(_peek(dut, UART_RESULT + 4) & 0xFF)]
+    assert got == ["A", "B"], f"latency {latency}: read {got}, expected ['A', 'B']"
 
 
 def runCocotbTests():

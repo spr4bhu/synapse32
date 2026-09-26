@@ -25,6 +25,7 @@ module mem_adapter #(
     output wire [3:0] store_be,
     output wire [31:0] store_wdata,
     output wire write_fire,
+    output wire read_fire,
     input wire [31:0] store_rdata
 );
 
@@ -38,6 +39,7 @@ module mem_adapter #(
             assign store_be = be;
             assign store_wdata = wdata;
             assign write_fire = req && we;
+            assign read_fire = req && !we;
         end else begin : g_registered
             localparam COUNT_WIDTH = (RESPONSE_LATENCY < 3) ? 1 :
                                      (RESPONSE_LATENCY < 5) ? 2 :
@@ -102,6 +104,7 @@ module mem_adapter #(
             assign store_be = busy ? be_q : be;
             assign store_wdata = busy ? wdata_q : wdata;
             assign write_fire = (sample_now && we_q) || (sample_on_accept && we);
+            assign read_fire = (sample_now && !we_q) || (sample_on_accept && !we);
             assign rvalid = rvalid_q;
             assign rdata = rdata_q;
         end

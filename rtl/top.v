@@ -56,6 +56,7 @@ module top #(
     wire [31:0] data_store_wdata;
     wire data_store_we;
     wire data_write_fire;
+    wire data_read_fire;
     
     // Timer module wires
     wire [31:0] timer_read_data;
@@ -129,7 +130,9 @@ module top #(
     assign instr_debug = instr_to_cpu;
     
     // Memory adapters: the core presents a physical address and waits for the response.
-    assign cpu_data_req = cpu_mem_read_en || cpu_mem_write_en;
+    // A faulting access is never accepted, or it would commit after the trap.
+    assign cpu_data_req = (cpu_mem_read_en || cpu_mem_write_en) &&
+                          !cpu_load_page_fault && !cpu_store_page_fault;
 
     mem_adapter #(.RESPONSE_LATENCY(MEM_LATENCY)) instr_adapter (
         .clk(clk),
@@ -147,6 +150,7 @@ module top #(
         .store_be(),
         .store_wdata(),
         .write_fire(),
+        .read_fire(),
         .store_rdata(instr_store_rdata)
     );
 
@@ -166,6 +170,7 @@ module top #(
         .store_be(data_store_be),
         .store_wdata(data_store_wdata),
         .write_fire(data_write_fire),
+        .read_fire(data_read_fire),
         .store_rdata(mem_read_data)
     );
 
@@ -291,7 +296,7 @@ module top #(
         .addr(data_store_addr),
         .write_data(data_store_wdata),
         .write_enable(data_write_fire && timer_access),
-        .read_enable(cpu_mem_read_en && timer_access),
+        .read_enable(data_read_fire && timer_access),
         .read_data(timer_read_data),
         .timer_valid(timer_valid),
         .timer_interrupt(timer_interrupt)
@@ -304,7 +309,7 @@ module top #(
         .addr(data_store_addr),
         .write_data(data_store_wdata),
         .write_enable(data_write_fire && uart_access),
-        .read_enable(cpu_mem_read_en && uart_access),
+        .read_enable(data_read_fire && uart_access),
         .read_data(uart_read_data),
         .uart_valid(uart_valid),
         .interrupt(uart_interrupt),
@@ -318,7 +323,7 @@ module top #(
         .addr(data_store_addr),
         .write_data(data_store_wdata),
         .write_enable(data_write_fire && plic_access),
-        .read_enable(cpu_mem_read_en && plic_access),
+        .read_enable(data_read_fire && plic_access),
         .read_data(plic_read_data),
         .plic_valid(plic_valid),
         .source_irq(uart_interrupt),
