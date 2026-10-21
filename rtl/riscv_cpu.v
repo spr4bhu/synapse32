@@ -48,7 +48,8 @@ module riscv_cpu (
     input wire timer_interrupt,
     input wire software_interrupt,
     input wire external_interrupt,
-    input wire machine_software_interrupt
+    input wire machine_software_interrupt,
+    input wire [63:0] mtime_in
 );
 
     // Instantiate PC
@@ -578,7 +579,8 @@ module riscv_cpu (
         .timer_interrupt(timer_interrupt),
         .software_interrupt(software_interrupt),
         .external_interrupt(external_interrupt),
-        .machine_software_interrupt(machine_software_interrupt)
+        .machine_software_interrupt(machine_software_interrupt),
+        .mtime_in(mtime_in)
     );
 
     // Value available for EX-stage forwarding from MEM stage.

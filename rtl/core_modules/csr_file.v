@@ -55,7 +55,8 @@ module csr_file (
     input wire timer_interrupt,
     input wire software_interrupt,
     input wire external_interrupt,
-    input wire machine_software_interrupt
+    input wire machine_software_interrupt,
+    input wire [63:0] mtime_in
 );
 
     // Common CSR addresses
@@ -474,10 +475,10 @@ module csr_file (
                 CSR_MCYCLEH:  read_data = cycle_counter[63:32];
                 CSR_MINSTRETH: read_data = instret_counter[63:32];
                 CSR_CYCLE:    read_data = cycle_counter[31:0];
-                CSR_TIME:     read_data = cycle_counter[31:0];
+                CSR_TIME:     read_data = mtime_in[31:0];
                 CSR_INSTRET:  read_data = instret_counter[31:0];
                 CSR_CYCLEH:   read_data = cycle_counter[63:32];
-                CSR_TIMEH:    read_data = cycle_counter[63:32];
+                CSR_TIMEH:    read_data = mtime_in[63:32];
                 CSR_INSTRETH: read_data = instret_counter[63:32];
                 CSR_PMPCFG0:  read_data = 32'h0;
                 CSR_PMPADDR0: read_data = 32'h0;
