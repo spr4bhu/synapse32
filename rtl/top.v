@@ -59,6 +59,7 @@ module top #(
     wire cpu_data_gnt;
     wire cpu_data_rvalid;
     wire [31:0] cpu_data_rdata;
+    wire [31:0] cpu_load_rdata;
     wire [31:0] instr_store_addr;
     wire [31:0] instr_store_rdata;
     wire [31:0] data_store_addr;
@@ -133,6 +134,9 @@ module top #(
     wire store_buf_full;
     wire store_buf_drained;
     wire store_buf_match;
+    wire store_buf_forward;
+    wire [31:0] store_buf_forward_data;
+    wire store_buf_forward_go;
     wire [31:0] store_buf_head_addr;
     wire [3:0] store_buf_head_be;
     wire [31:0] store_buf_head_data;
@@ -206,6 +210,8 @@ module top #(
     assign store_buf_push_req = cpu_data_bus_req && cpu_mem_write_en && !store_buf_full;
     assign cpu_load_go = cpu_data_bus_req && !cpu_mem_write_en && !store_buf_match &&
                          !(cpu_device_access && !store_buf_empty);
+    // A load the youngest buffered write to its word fully covers takes its bytes from the buffer.
+    assign store_buf_forward_go = cpu_data_bus_req && !cpu_mem_write_en && store_buf_forward;
     // An empty buffer issues the entering write at once.
     assign drain_req = !store_buf_empty || store_buf_push_req;
     assign drain_addr = store_buf_empty ? phys_data_addr : store_buf_head_addr;
@@ -224,9 +230,11 @@ module top #(
     assign data_bus_drain_owns = data_bus_drain_owner_q || (data_bus_drain_sel && dcache_gnt);
     assign mmu_walk_gnt = dcache_gnt && data_bus_walk_sel;
     assign mmu_walk_rvalid = dcache_rvalid && data_bus_walk_owns;
-    assign cpu_data_gnt = cpu_mem_write_en ? store_buf_push_req : (dcache_gnt && cpu_load_go);
+    assign cpu_data_gnt = cpu_mem_write_en ? store_buf_push_req :
+                          ((dcache_gnt && cpu_load_go) || store_buf_forward_go);
     assign cpu_data_rvalid = cpu_mem_write_en ? store_buf_push_req :
-                             (dcache_rvalid && !data_bus_walk_owns && !data_bus_drain_owns);
+                             ((dcache_rvalid && !data_bus_walk_owns && !data_bus_drain_owns) || store_buf_forward_go);
+    assign cpu_load_rdata = store_buf_forward_go ? store_buf_forward_data : cpu_data_rdata;
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -258,7 +266,10 @@ module top #(
         .head_data(store_buf_head_data),
         .head_ram(store_buf_head_ram),
         .match_addr(phys_data_addr),
-        .match(store_buf_match)
+        .match_type(cpu_load_type),
+        .match(store_buf_match),
+        .forward(store_buf_forward),
+        .forward_data(store_buf_forward_data)
     );
 
     icache icache_inst (
@@ -357,7 +368,7 @@ module top #(
         .machine_software_interrupt(machine_software_interrupt),
         .mtime_in(mtime),
         .module_instr_in(instr_to_cpu),
-        .module_read_data_in(cpu_data_rdata),
+        .module_read_data_in(cpu_load_rdata),
         .module_pc_out(cpu_pc_out),
         .module_wr_data_out(cpu_mem_write_data),
         .module_mem_wr_en(cpu_mem_write_en),

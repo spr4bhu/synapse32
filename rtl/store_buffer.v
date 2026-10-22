@@ -19,7 +19,11 @@ module store_buffer #(
     output wire [31:0] head_data,
     output wire head_ram,
     input wire [31:0] match_addr,
-    output reg match
+    input wire [2:0] match_type,
+    output reg match,
+    // The youngest write to the word is RAM and holds every byte the load reads.
+    output wire forward,
+    output wire [31:0] forward_data
 );
     // Wide enough to hold DEPTH itself.
     localparam COUNT_WIDTH = (DEPTH < 2) ? 1 :
@@ -38,6 +42,20 @@ module store_buffer #(
     wire [COUNT_WIDTH-1:0] tail = pop ? count - 1'b1 : count;
     integer i;
 
+    // The youngest entry for the word, in byte lanes (entries hold be and data relative to their address).
+    reg [3:0] young_be;
+    reg [31:0] young_data;
+    reg young_ram;
+    wire [3:0] load_be = (match_type[1:0] == 2'b00) ? (4'b0001 << match_addr[1:0]) :
+                         (match_type[1:0] == 2'b01) ? (4'b0011 << match_addr[1:0]) : 4'b1111;
+    wire [31:0] young_shifted = young_data >> {match_addr[1:0], 3'b000};
+
+    assign forward = match && young_ram && ((load_be & ~young_be) == 4'b0);
+    assign forward_data = (match_type == 3'b000) ? {{24{young_shifted[7]}}, young_shifted[7:0]} :
+                          (match_type == 3'b100) ? {24'b0, young_shifted[7:0]} :
+                          (match_type == 3'b001) ? {{16{young_shifted[15]}}, young_shifted[15:0]} :
+                          (match_type == 3'b101) ? {16'b0, young_shifted[15:0]} : young_data;
+
     assign empty = (count == {COUNT_WIDTH{1'b0}});
     assign full = (count == DEPTH_COUNT);
     assign drained = (tail == {COUNT_WIDTH{1'b0}}) && !push;
@@ -48,9 +66,15 @@ module store_buffer #(
 
     always @(*) begin
         match = 1'b0;
+        young_be = 4'b0;
+        young_data = 32'b0;
+        young_ram = 1'b0;
         for (i = 0; i < DEPTH; i = i + 1) begin
             if (({{(32-COUNT_WIDTH){1'b0}}, count} > i) && (addr_q[i][31:2] == match_addr[31:2])) begin
                 match = 1'b1;
+                young_be = be_q[i] << addr_q[i][1:0];
+                young_data = data_q[i] << {addr_q[i][1:0], 3'b000};
+                young_ram = ram_q[i];
             end
         end
     end
