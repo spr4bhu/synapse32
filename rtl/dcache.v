@@ -72,10 +72,11 @@ module dcache #(
     localparam E_SCAN = 3'd6;
     localparam E_BYPASS = 3'd7;
 
-    // Ways 1, 2, 4 or 8 (PLRU tree), set index and word offset inside the 4 KB page, 1 to 16 MSHRs.
+    // Ways 1, 2, 4 or 8 (PLRU tree), set index and word offset inside the 4 KB page, 1 to 16 MSHRs. Lines of at
+    // most 8 words: the pinned Verilator does not unroll the per-byte loops over a longer line.
     generate
         if (((NUM_WAYS != 1) && (NUM_WAYS != 2) && (NUM_WAYS != 4) && (NUM_WAYS != 8)) ||
-            (WORD_OFFSET_BITS < 1) || (SET_INDEX_BITS < 1) || (WORD_INDEX_BITS > 10) ||
+            (WORD_OFFSET_BITS < 1) || (WORD_OFFSET_BITS > 3) || (SET_INDEX_BITS < 1) || (WORD_INDEX_BITS > 10) ||
             (NUM_MSHR < 1) || (NUM_MSHR > 16)) begin : g_invalid_parameters
             dcache_parameters_out_of_range invalid_parameters ();
         end

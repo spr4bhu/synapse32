@@ -42,6 +42,13 @@ module store_buffer #(
     wire [COUNT_WIDTH-1:0] tail = pop ? count - 1'b1 : count;
     integer i, j;
 
+    // One to 64 entries: the pinned Verilator does not unroll the per-entry loops further.
+    generate
+        if ((DEPTH < 1) || (DEPTH > 64)) begin : g_invalid_parameters
+            store_buffer_parameters_out_of_range invalid_parameters ();
+        end
+    endgenerate
+
     // The last write to the word, in byte lanes (entries hold be and data relative to their address).
     reg [3:0] last_be;
     reg [31:0] last_data;
