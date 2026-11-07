@@ -91,6 +91,29 @@ jobs:
               --arch-test /opt/riscv-arch-test \
               --report .github/artifacts/isa/arch_compare_report.json
 
+      - name: Run ISA golden comparison over the core configurations
+        env:
+          ISA_IMAGE: ${{ steps.tags.outputs.immutable }}
+        run: |
+          configs=$(python3 -c 'import sys; sys.path.insert(0, "tests"); from core_configs import MATRIX; print(" ".join(MATRIX))')
+          # Every configuration runs and writes its report; the step fails at the end if any failed.
+          failed=""
+          for config in $configs; do
+            docker run --rm \
+              --volume "$GITHUB_WORKSPACE:/workspace" \
+              --workdir /workspace \
+              "$ISA_IMAGE" \
+              /opt/venv/bin/python .github/scripts/compare_with_spike.py \
+                --riscv-tests /opt/riscv-tests \
+                --suites rv32ui,rv32um,rv32ua,rv32mi,rv32si \
+                --mem-latency 2 --config "$config" \
+                --report ".github/artifacts/isa/compare_report_$config.json" || failed="$failed $config"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::riscv-tests failed under:$failed"
+            exit 1
+          fi
+
       - name: Publish tested image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -106,6 +129,6 @@ jobs:
         with:
           name: isa-golden-report
           path: |
-            .github/artifacts/isa/compare_report.json
+            .github/artifacts/isa/compare_report*.json
             .github/artifacts/isa/arch_compare_report.json
           if-no-files-found: error
