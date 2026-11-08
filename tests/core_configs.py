@@ -8,13 +8,14 @@ MATRIX = {
     "long_lines": {"ICACHE_WORD_OFFSET_BITS": 3, "DCACHE_WORD_OFFSET_BITS": 3},
     "one_mshr": {"NUM_MSHR": 1},
     "small_buffers": {"STORE_BUFFER_DEPTH": 1, "TLB_ENTRIES": 1},
+    "two_ports": {"MEM_PORTS": 2},
 }
 
 # Every parameter the matrix changes, at top's default (keep equal to rtl/top.v).
 DEFAULT_CORE = {
     "ICACHE_ENABLE": 1, "ICACHE_WAYS": 4, "ICACHE_SET_INDEX_BITS": 6, "ICACHE_WORD_OFFSET_BITS": 2,
     "DCACHE_ENABLE": 1, "DCACHE_WAYS": 4, "DCACHE_SET_INDEX_BITS": 6, "DCACHE_WORD_OFFSET_BITS": 2,
-    "NUM_MSHR": 8, "STORE_BUFFER_DEPTH": 4, "TLB_ENTRIES": 8,
+    "NUM_MSHR": 8, "STORE_BUFFER_DEPTH": 4, "TLB_ENTRIES": 8, "MEM_PORTS": 1,
 }
 
 
