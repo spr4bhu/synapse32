@@ -20,15 +20,7 @@ from cocotb_test.simulator import run
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core_configs import MATRIX  # noqa: E402
-
-
-def _find_repo_root() -> Path:
-    cur = Path.cwd()
-    while not (cur / "rtl").exists():
-        if cur.parent == cur:
-            raise FileNotFoundError("Could not locate repo root (no rtl/ directory found)")
-        cur = cur.parent
-    return cur
+from support import find_repo_root
 
 
 @cocotb.test()
@@ -119,7 +111,7 @@ def runCocotbTests():
     if missing:
         pytest.skip(f"Skipping ISA harness in full pytest run (missing env: {', '.join(missing)})")
 
-    repo_root = _find_repo_root()
+    repo_root = find_repo_root()
     rtl_dir = repo_root / "rtl"
     incl_dir = rtl_dir / "include"
     # Keep the image path stable across test invocations.  The comparison
